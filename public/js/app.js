@@ -478,6 +478,8 @@ function showDone() {
 // ============================================================
 // [2번] 마이 예약 목록 + 예약 취소
 // ============================================================
+let myBookingsCache = [];   // 달력뷰에서 재사용
+let myCalCursor = null;     // 내 예약 달력이 보는 달
 window.openMyBookings = async () => {
   show("myView");
   const box = $("myList");
@@ -488,6 +490,7 @@ window.openMyBookings = async () => {
     const all = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
       .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+    myBookingsCache = all;
 
     const today = new Date().toISOString().slice(0, 10);
     const upcoming = all.filter(b => b.status === "confirmed" && b.date >= today);
@@ -510,8 +513,82 @@ window.openMyBookings = async () => {
     }
     // 반복예약 패턴 목록 (예약 아래에)
     await renderMyRecurring(box);
+    // 달력이 펼쳐져 있으면 갱신
+    if (!$("myCalBox").classList.contains("hide")) renderMyCalendar();
   } catch (e) {
     box.innerHTML = `<p class="hint">목록을 불러오지 못했어요.</p>`;
+  }
+};
+
+// 달력 보기 토글
+window.toggleMyCalendar = () => {
+  const box = $("myCalBox"), btn = $("myCalToggle");
+  const willShow = box.classList.contains("hide");
+  box.classList.toggle("hide", !willShow);
+  btn.textContent = willShow ? "📋 목록만 보기" : "📅 달력으로 보기";
+  btn.classList.toggle("on", willShow);
+  if (willShow) { myCalCursor = null; renderMyCalendar(); }
+};
+window.myCalMove = (delta) => {
+  myCalCursor = new Date(myCalCursor.getFullYear(), myCalCursor.getMonth() + delta, 1);
+  renderMyCalendar();
+};
+// 내 예약 달력: 예약 있는 날에 점 표시, 날짜 탭 시 해당 예약 강조
+function renderMyCalendar() {
+  if (!myCalCursor) {
+    // 가장 가까운 다가오는 예약의 달, 없으면 이번 달
+    const today = new Date().toISOString().slice(0,10);
+    const next = myBookingsCache.find(b => b.status === "confirmed" && b.date >= today);
+    const base = next ? new Date(next.date) : new Date();
+    myCalCursor = new Date(base.getFullYear(), base.getMonth(), 1);
+  }
+  const box = $("myCalBox");
+  const year = myCalCursor.getFullYear(), month = myCalCursor.getMonth();
+  const todayStr = new Date().toISOString().slice(0,10);
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const W = ["일","월","화","수","목","금","토"];
+  // 이 달의 예약 날짜별 상태 집계
+  const byDate = {};
+  myBookingsCache.forEach(b => {
+    if (b.date.slice(0,7) !== `${year}-${String(month+1).padStart(2,"0")}`) return;
+    const st = b.status === "cancelled" ? "cancelled" : (b.status === "confirmed" && b.date >= todayStr ? "upcoming" : "done");
+    // 우선순위: upcoming > done > cancelled
+    if (!byDate[b.date] || (st === "upcoming") || (st === "done" && byDate[b.date] === "cancelled"))
+      byDate[b.date] = st;
+  });
+
+  let html = `<div class="cal-head">
+      <button class="cal-nav" onclick="myCalMove(-1)">‹</button>
+      <span class="cal-title">${year}년 ${month + 1}월</span>
+      <button class="cal-nav" onclick="myCalMove(1)">›</button>
+    </div>
+    <div class="cal-grid">`;
+  W.forEach((w, i) => html += `<div class="cal-dow ${i===0?'sun':''} ${i===6?'sat':''}">${w}</div>`);
+  for (let i = 0; i < firstDay; i++) html += `<div></div>`;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const ds = `${year}-${String(month+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    const st = byDate[ds];
+    const isToday = ds === todayStr;
+    const dot = st ? `<span class="cal-dot ${st}"></span>` : "";
+    html += `<div class="my-cal-day ${isToday?'today':''} ${st?'has':''}" ${st?`onclick="scrollToBooking('${ds}')"`:""}>
+      <span>${d}</span>${dot}</div>`;
+  }
+  html += `</div>
+    <div class="cal-legend">
+      <span><span class="cal-dot upcoming"></span>예정</span>
+      <span><span class="cal-dot done"></span>완료</span>
+      <span><span class="cal-dot cancelled"></span>취소</span>
+    </div>`;
+  box.innerHTML = html;
+}
+// 달력에서 날짜 탭 → 리스트의 해당 예약 카드로 스크롤+강조
+window.scrollToBooking = (ds) => {
+  const card = document.querySelector(`#myList [data-date="${ds}"]`);
+  if (card) {
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    card.classList.add("flash");
+    setTimeout(() => card.classList.remove("flash"), 1500);
   }
 };
 
@@ -552,7 +629,7 @@ function bookingCard(b, cancelable) {
       </div>`;
     }
   }
-  return `<div class="bk-card ${b.status === 'cancelled' ? 'dim' : ''}">
+  return `<div class="bk-card ${b.status === 'cancelled' ? 'dim' : ''}" data-date="${b.date}">
       <div class="bk-top">
         <div><b>${b.proName}</b> · ${b.lessonName}</div>
         <span class="bk-badge">${statusLabel}</span>
