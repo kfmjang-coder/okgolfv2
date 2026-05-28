@@ -197,8 +197,14 @@ function fillRecurTimeOptions() {
 
 // "다음" 버튼: 반복이면 등록, 아니면 날짜선택으로
 window.step1Next = () => {
-  if ($("recurOn").checked) registerRecurring();
-  else openStep2();
+  if ($("recurOn").checked) {
+    // 시간 옵션이 비어있으면 채우고 막음
+    if (!$("rcTime").value) {
+      fillRecurTimeOptions();
+      if (!$("rcTime").value) return alert("시간 목록을 불러오지 못했어요. 프로를 다시 선택해주세요.");
+    }
+    registerRecurring();
+  } else openStep2();
 };
 function pickPro(el) {
   document.querySelectorAll("#proPick .pick-card").forEach(c => c.classList.remove("on"));
@@ -688,26 +694,28 @@ window.onAdminSlotChange = async () => {
   html += `</div>`;
   // 차단 등록 영역
   html += `<div class="block-box">
-    <p class="mini-label">🚫 예약 차단 (개인사정 등)</p>
-    <label style="display:flex;align-items:center;gap:8px;margin:8px 0;font-size:14px">
-      <input type="radio" name="blkType" value="allDay" checked onchange="onBlkType()" style="width:auto;margin:0"> 하루 전체 휴무</label>
-    <label style="display:flex;align-items:center;gap:8px;margin:8px 0;font-size:14px">
-      <input type="radio" name="blkType" value="range" onchange="onBlkType()" style="width:auto;margin:0"> 시간대만 차단</label>
-    <div id="blkRange" class="hide" style="display:flex;gap:8px;margin:8px 0">
-      <select id="blkStart">${hourOptions(adminSlotState.start, adminSlotState.end)}</select>
-      <span style="align-self:center">~</span>
-      <select id="blkEnd">${hourOptions(adminSlotState.start, adminSlotState.end)}</select>
+    <p class="mini-label">🚫 예약 차단 (프로 개인사정 등)</p>
+    <select id="blkType" onchange="onBlkType()">
+      <option value="allDay">하루 전체 휴무</option>
+      <option value="range">특정 시간대만 차단</option>
+    </select>
+    <div id="blkRange" class="hide">
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+        <select id="blkStart" style="flex:1">${timeOptions(adminSlotState.start, adminSlotState.end, false)}</select>
+        <span>~</span>
+        <select id="blkEnd" style="flex:1">${timeOptions(adminSlotState.start, adminSlotState.end, true)}</select>
+      </div>
     </div>
-    <input id="blkReason" placeholder="차단 이유 (예: 개인 사정, 외부 레슨)" style="margin-top:6px">
+    <input id="blkReason" placeholder="차단 사유 (예: 외부 레슨, 개인 사정)" style="margin-top:10px">
     <button class="btn-ghost" onclick="addBlock()" style="margin-top:10px">차단 등록</button>`;
   // 현재 차단 목록
   if (blocks.length) {
-    html += `<p class="sub" style="margin-top:14px">현재 차단</p>`;
+    html += `<p class="sub" style="margin-top:16px">현재 차단 목록</p>`;
     blkSnap.docs.forEach(d => {
       const b = d.data();
-      const range = b.allDay ? "하루 전체" : `${b.startTime}~${b.endTime}`;
+      const range = b.allDay ? "🌙 하루 전체 휴무" : `⏰ ${b.startTime} ~ ${b.endTime}`;
       html += `<div class="bk-card" style="margin-top:8px"><div class="bk-top">
-        <div>${range}${b.reason ? ` · ${b.reason}` : ""}</div>
+        <div><b>${range}</b>${b.reason ? `<div class="sub" style="margin-top:2px">${esc(b.reason)}</div>` : ""}</div>
         <button class="mini-btn danger" onclick="removeBlock('${d.id}')">해제</button></div></div>`;
     });
   }
@@ -715,28 +723,37 @@ window.onAdminSlotChange = async () => {
   grid.innerHTML = html;
 };
 
-function hourOptions(start, end) {
+// 20분 단위 시간 옵션 (end=true면 종료용이라 마지막 시각 포함)
+function timeOptions(startH, endH, isEnd) {
   let o = "";
-  for (let h = start; h <= end; h++) o += `<option value="${String(h).padStart(2,"0")}:00">${h}:00</option>`;
+  for (let h = startH; h < endH; h++) for (const m of [0, 20, 40]) {
+    const t = String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
+    o += `<option value="${t}">${t}</option>`;
+  }
+  // 종료 셀렉트는 운영 종료 정시도 선택 가능 (예: 22:00)
+  if (isEnd) { const t = String(endH).padStart(2,"0")+":00"; o += `<option value="${t}">${t}</option>`; }
   return o;
 }
+
 window.onBlkType = () => {
-  const isRange = document.querySelector('input[name="blkType"]:checked').value === "range";
+  const isRange = $("blkType").value === "range";
   $("blkRange").classList.toggle("hide", !isRange);
 };
 
-// 차단 등록
+// 차단 등록 — blkType 드롭다운 값으로 명확히 분기
 window.addBlock = async () => {
   const { proId, date } = adminSlotState;
   if (!proId || !date) { alert("프로와 날짜를 먼저 선택하세요."); return; }
-  const isRange = document.querySelector('input[name="blkType"]:checked').value === "range";
+  const type = $("blkType").value;       // "allDay" | "range"
   const reason = $("blkReason").value.trim();
-  const data = { proId, date, reason, allDay: !isRange, createdAt: serverTimestamp() };
-  if (isRange) {
+  const data = { proId, date, reason, allDay: type === "allDay", createdAt: serverTimestamp() };
+  if (type === "range") {
     const s = $("blkStart").value, e = $("blkEnd").value;
-    if (s >= e) { alert("시작 시각이 종료보다 빨라야 합니다."); return; }
+    if (s >= e) { alert("시작 시각이 종료 시각보다 빨라야 합니다."); return; }
     data.startTime = s; data.endTime = e;
   }
+  const label = type === "allDay" ? "하루 전체 휴무" : `${data.startTime}~${data.endTime} 차단`;
+  if (!confirm(`${date}\n${label}${reason ? `\n사유: ${reason}` : ""}\n\n등록할까요?`)) return;
   try { await addDoc(collection(db, "blocks"), data); onAdminSlotChange(); }
   catch (err) { alert("차단 등록 실패: " + err.message); }
 };
@@ -1015,55 +1032,71 @@ const esc = (s) => (s || "").replace(/[&<>"]/g, c =>
 window.registerRecurring = async () => {
   const proId = draft.proId, lessonTypeId = draft.lessonTypeId;
   const proName = draft.proName, lessonName = draft.lessonName;
-  const weekday = parseInt($("rcWeekday").value, 10);   // 0=일 ~ 6=토
-  const time = $("rcTime").value;                        // "HH:MM"
-  const weeks = parseInt($("rcWeeks").value, 10);        // 몇 주
-  const everyOther = $("rcEvery").value === "2";         // 격주
-  if (!proId || !lessonTypeId || !time) return alert("프로·레슨·시간을 모두 선택하세요.");
+  const weekday = parseInt($("rcWeekday").value, 10);
+  const time = $("rcTime").value;
+  const weeks = parseInt($("rcWeeks").value, 10);
+  const everyOther = $("rcEvery").value === "2";
+  if (!proId || !lessonTypeId) return alert("프로와 레슨을 먼저 선택하세요.");
+  if (!time) return alert("시간을 선택하세요. (시간 목록이 비어있으면 프로 운영시간을 확인하세요)");
 
-  // 패턴 문서 저장
-  await addDoc(collection(db, "recurring"), {
-    memberId: me.uid, proId, proName, lessonTypeId, lessonName,
-    weekday, time, everyOther, weeks, createdAt: serverTimestamp()
-  });
+  const btn = $("toStep2"); btn.disabled = true; btn.textContent = "등록 중…";
+  try {
+    // 패턴 문서 저장
+    await addDoc(collection(db, "recurring"), {
+      memberId: me.uid, proId, proName, lessonTypeId, lessonName,
+      weekday, time, everyOther, weeks, createdAt: serverTimestamp()
+    });
 
-  // 해당 요일의 향후 날짜들 계산
-  const dates = [];
-  const today = new Date(); today.setHours(0,0,0,0);
-  let count = 0, wk = 0;
-  for (let i = 0; i < weeks * 7 + 7 && count < weeks; i++) {
-    const d = new Date(today); d.setDate(d.getDate() + i);
-    if (d.getDay() === weekday) {
-      if (!everyOther || wk % 2 === 0) { dates.push(d.toISOString().slice(0,10)); count++; }
-      wk++;
+    // 해당 요일의 향후 날짜 계산
+    const dates = [];
+    const today = new Date(); today.setHours(0,0,0,0);
+    let count = 0, wk = 0;
+    for (let i = 0; i < weeks * 7 + 7 && count < weeks; i++) {
+      const d = new Date(today); d.setDate(d.getDate() + i);
+      if (d.getDay() === weekday) {
+        if (!everyOther || wk % 2 === 0) {
+          const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+          dates.push(ds); count++;
+        }
+        wk++;
+      }
     }
-  }
 
-  // 각 날짜의 슬롯을 찾아 트랜잭션 예약 (열려있는 것만)
-  let ok = 0, skip = 0;
-  for (const date of dates) {
-    const ss = await getDocs(query(collection(db, "slots"),
-      where("proId", "==", proId), where("date", "==", date), where("time", "==", time)));
-    if (ss.empty || ss.docs[0].data().status !== "open") { skip++; continue; }
-    const slotId = ss.docs[0].id;
-    try {
-      await runTransaction(db, async (tx) => {
-        const sRef = doc(db, "slots", slotId);
-        const fresh = await tx.get(sRef);
-        if (!fresh.exists() || fresh.data().status !== "open") throw new Error("taken");
-        tx.update(sRef, { status: "booked", bookedBy: me.uid });
-        tx.set(doc(collection(db, "bookings")), {
-          slotId, proId, proName, lessonTypeId, lessonName,
-          memberId: me.uid, memberName: myProfile?.name || "회원",
-          date, time, people: 1, request: "[반복예약]",
-          status: "confirmed", createdAt: serverTimestamp()
+    // 각 날짜의 열린 슬롯을 트랜잭션 예약
+    let ok = 0, skip = 0;
+    for (const date of dates) {
+      const ss = await getDocs(query(collection(db, "slots"),
+        where("proId", "==", proId), where("date", "==", date), where("time", "==", time)));
+      if (ss.empty || ss.docs[0].data().status !== "open") { skip++; continue; }
+      const slotId = ss.docs[0].id;
+      try {
+        await runTransaction(db, async (tx) => {
+          const sRef = doc(db, "slots", slotId);
+          const fresh = await tx.get(sRef);
+          if (!fresh.exists() || fresh.data().status !== "open") throw new Error("taken");
+          tx.update(sRef, { status: "booked", bookedBy: me.uid });
+          tx.set(doc(collection(db, "bookings")), {
+            slotId, proId, proName, lessonTypeId, lessonName,
+            memberId: me.uid, memberName: myProfile?.name || "회원",
+            date, time, people: 1, request: "[반복예약]",
+            status: "confirmed", createdAt: serverTimestamp()
+          });
         });
-      });
-      ok++;
-    } catch { skip++; }
+        ok++;
+      } catch { skip++; }
+    }
+
+    if (ok === 0 && skip > 0) {
+      alert(`반복 패턴은 저장됐지만, 예약된 건이 없어요.\n\n선택한 요일·시간(${time})에 열린 슬롯이 없습니다.\n관리자가 해당 날짜의 슬롯을 먼저 열어야 자동 예약됩니다.\n(불가 ${skip}건)`);
+    } else {
+      alert(`반복예약 완료!\n예약 성공: ${ok}건${skip ? ` / 불가(미개설·마감): ${skip}건` : ""}`);
+    }
+    show("homeView"); renderHome();
+  } catch (e) {
+    alert("반복예약 등록 실패: " + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = "반복예약 등록";
   }
-  alert(`반복예약 완료!\n예약 성공: ${ok}건${skip ? ` / 불가(미개설·마감): ${skip}건` : ""}`);
-  show("homeView"); renderHome();
 };
 
 window.deleteRecurring = async (id) => {
