@@ -9,7 +9,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
 import {
   collection, doc, setDoc, getDoc, getDocs, query, where, orderBy, limit,
-  runTransaction, serverTimestamp, updateDoc
+  runTransaction, serverTimestamp, updateDoc, addDoc, deleteDoc, writeBatch
 } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
 
 const $ = (id) => document.getElementById(id);
@@ -51,6 +51,7 @@ if (isConfigured) {
         myProfile = snap.data();
       }
       $("navUser").textContent = myProfile.name;
+      document.body.classList.toggle("is-admin", myProfile.role === "admin");
       show("homeView");
       renderHome();
     } else {
@@ -395,4 +396,174 @@ window.cancelBooking = async (bookingId, slotId) => {
     alert("예약이 취소되었습니다.");
     window.openMyBookings();
   } catch (e) { alert(e.message); }
+};
+
+// ============================================================
+// [3번] 관리자 콘솔 — 현황 / 슬롯 / 프로·레슨
+// admin role 전용. 보안 규칙이 실제 권한을 강제함.
+// ============================================================
+window.openAdmin = () => { show("adminView"); adminTab("status"); };
+
+window.adminTab = (tab) => {
+  document.querySelectorAll("#adminTabs button").forEach(b =>
+    b.classList.toggle("on", b.dataset.tab === tab));
+  const dayBtn = $("dayOpenBtn");
+  if (dayBtn) dayBtn.style.display = tab === "slots" ? "block" : "none";
+  if (tab === "status") renderAdminStatus();
+  else if (tab === "slots") renderAdminSlots();
+  else if (tab === "manage") renderAdminManage();
+};
+
+// ---------- 현황: 오늘 예약자 ----------
+async function renderAdminStatus() {
+  const box = $("adminBody");
+  box.innerHTML = `<p class="hint">불러오는 중…</p>`;
+  const today = new Date().toISOString().slice(0, 10);
+  const snap = await getDocs(query(collection(db, "bookings"), where("date", "==", today)));
+  const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .filter(b => b.status === "confirmed")
+    .sort((a, b) => (a.time + a.proName).localeCompare(b.time + b.proName));
+  let html = `<p class="mini-label">오늘 예약 (${fmtDate(today)}) · ${list.length}건</p>`;
+  if (list.length === 0) html += `<p class="hint">오늘 예약이 없습니다.</p>`;
+  list.forEach(b => {
+    html += `<div class="bk-card">
+      <div class="bk-top"><div><b>${b.time}</b> · ${b.proName}</div>
+        <span class="bk-badge">${b.lessonName}</span></div>
+      <div class="bk-time" style="color:var(--ink)">${b.memberName || "회원"} · ${b.people || 1}명</div>
+      ${b.request ? `<div class="sub" style="margin-top:6px">요청: ${b.request}</div>` : ""}
+    </div>`;
+  });
+  box.innerHTML = html;
+}
+
+// ---------- 슬롯 관리: 프로·날짜 선택 → 시간 열기/닫기 ----------
+let adminSlotState = { proId: null, date: null };
+async function renderAdminSlots() {
+  const box = $("adminBody");
+  const ps = await getDocs(query(collection(db, "pros"), where("active", "==", true)));
+  let opts = `<option value="">프로 선택</option>`;
+  ps.forEach(d => opts += `<option value="${d.id}">${d.data().name}</option>`);
+  const today = new Date().toISOString().slice(0, 10);
+  box.innerHTML = `
+    <p class="mini-label">슬롯 열기 / 닫기</p>
+    <select id="asPro" onchange="onAdminSlotChange()">${opts}</select>
+    <input type="date" id="asDate" min="${today}" onchange="onAdminSlotChange()" style="margin-top:10px">
+    <div id="asGrid" style="margin-top:14px"><p class="hint">프로와 날짜를 선택하세요.</p></div>`;
+}
+window.onAdminSlotChange = async () => {
+  adminSlotState.proId = $("asPro").value;
+  adminSlotState.date = $("asDate").value;
+  const grid = $("asGrid");
+  if (!adminSlotState.proId || !adminSlotState.date) {
+    grid.innerHTML = `<p class="hint">프로와 날짜를 선택하세요.</p>`; return;
+  }
+  grid.innerHTML = `<p class="hint">불러오는 중…</p>`;
+  // 기존 슬롯 조회
+  const snap = await getDocs(query(collection(db, "slots"),
+    where("proId", "==", adminSlotState.proId), where("date", "==", adminSlotState.date)));
+  const existing = {};
+  snap.docs.forEach(d => existing[d.data().time] = { id: d.id, ...d.data() });
+  // 10~22시 20분 단위 버튼 (있으면 상태 표시, 없으면 닫힘)
+  let html = `<p class="sub" style="margin-bottom:8px">탭하여 열기/닫기 · 🟢열림 🔴예약됨 ⚪닫힘</p>
+    <div class="as-grid">`;
+  for (let h = 10; h < 22; h++) {
+    for (const m of [0, 20, 40]) {
+      const t = String(h).padStart(2,"0") + ":" + String(m).padStart(2,"0");
+      const ex = existing[t];
+      let cls = "closed", label = t;
+      if (ex && ex.status === "open") cls = "open";
+      else if (ex && ex.status === "booked") cls = "booked";
+      html += `<button class="as-slot ${cls}" onclick="toggleSlot('${t}')"
+        ${cls === "booked" ? "disabled" : ""}>${label}</button>`;
+    }
+  }
+  html += `</div>`;
+  grid.innerHTML = html;
+};
+
+// 슬롯 토글: 닫힘→열기(생성), 열림→닫기(삭제). 예약된 건 불가.
+window.toggleSlot = async (time) => {
+  const { proId, date } = adminSlotState;
+  const snap = await getDocs(query(collection(db, "slots"),
+    where("proId", "==", proId), where("date", "==", date), where("time", "==", time)));
+  try {
+    if (snap.empty) {
+      // 열기
+      await addDoc(collection(db, "slots"), {
+        proId, date, time, durationMin: 20, status: "open", bookedBy: null });
+    } else {
+      const d = snap.docs[0];
+      if (d.data().status === "booked") { alert("예약된 시간은 닫을 수 없어요."); return; }
+      await deleteDoc(doc(db, "slots", d.id)); // 닫기
+    }
+    onAdminSlotChange(); // 새로고침
+  } catch (e) { alert("처리 실패: " + e.message); }
+};
+
+// 하루 일괄 열기 (운영시간 10~22시 전체)
+window.openWholeDay = async () => {
+  const { proId, date } = adminSlotState;
+  if (!proId || !date) { alert("프로와 날짜를 먼저 선택하세요."); return; }
+  if (!confirm(`${date} 10~22시를 모두 열까요?`)) return;
+  const snap = await getDocs(query(collection(db, "slots"),
+    where("proId", "==", proId), where("date", "==", date)));
+  const have = new Set(snap.docs.map(d => d.data().time));
+  const batch = writeBatch(db);
+  for (let h = 10; h < 22; h++) for (const m of [0,20,40]) {
+    const t = String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
+    if (!have.has(t)) batch.set(doc(collection(db, "slots")),
+      { proId, date, time: t, durationMin: 20, status: "open", bookedBy: null });
+  }
+  try { await batch.commit(); onAdminSlotChange(); }
+  catch (e) { alert("일괄 열기 실패: " + e.message); }
+};
+
+// ---------- 프로 / 레슨 관리 ----------
+async function renderAdminManage() {
+  const box = $("adminBody");
+  box.innerHTML = `<p class="hint">불러오는 중…</p>`;
+  const [ps, ls] = await Promise.all([
+    getDocs(collection(db, "pros")),
+    getDocs(collection(db, "lessonTypes"))
+  ]);
+  let html = `<p class="mini-label">프로</p>`;
+  ps.docs.forEach(d => {
+    const p = d.data();
+    html += `<div class="bk-card"><div class="bk-top">
+      <div><b>${p.name}</b> · ${p.title || ""}</div>
+      <button class="mini-btn" onclick="toggleProActive('${d.id}',${p.active})">${p.active ? "비활성" : "활성"}</button>
+    </div><div class="sub">${p.active ? "활성" : "비활성"}</div></div>`;
+  });
+  html += `<button class="btn-ghost" onclick="addPro()" style="margin-top:6px">+ 프로 추가</button>`;
+  html += `<p class="mini-label" style="margin-top:20px">레슨 종류</p>`;
+  ls.docs.forEach(d => {
+    const l = d.data();
+    html += `<div class="bk-card"><div class="bk-top">
+      <div><b>${l.name}</b> · ${l.durationMin}분</div>
+      <button class="mini-btn danger" onclick="deleteLesson('${d.id}','${l.name}')">삭제</button>
+    </div></div>`;
+  });
+  html += `<button class="btn-ghost" onclick="addLesson()" style="margin-top:6px">+ 레슨 추가</button>`;
+  box.innerHTML = html;
+}
+window.toggleProActive = async (id, cur) => {
+  await updateDoc(doc(db, "pros", id), { active: !cur }); renderAdminManage();
+};
+window.addPro = async () => {
+  const name = prompt("프로 이름?"); if (!name) return;
+  const title = prompt("직함? (예: 대표프로)") || "프로";
+  try { await addDoc(collection(db, "pros"), { name, title, active: true }); renderAdminManage(); }
+  catch (e) { alert("추가 실패: " + e.message); }
+};
+window.addLesson = async () => {
+  const name = prompt("레슨 이름? (예: 개인 30분)"); if (!name) return;
+  const dur = parseInt(prompt("시간(분)?") || "30", 10);
+  try { await addDoc(collection(db, "lessonTypes"),
+    { name, durationMin: dur, order: 99, active: true }); renderAdminManage(); }
+  catch (e) { alert("추가 실패: " + e.message); }
+};
+window.deleteLesson = async (id, name) => {
+  if (!confirm(`'${name}' 레슨을 삭제할까요?`)) return;
+  try { await deleteDoc(doc(db, "lessonTypes", id)); renderAdminManage(); }
+  catch (e) { alert("삭제 실패: " + e.message); }
 };

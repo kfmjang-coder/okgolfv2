@@ -114,6 +114,22 @@
   .cancel-btn{margin-top:12px;width:100%;padding:11px;border:1px solid #6b2b2b;border-radius:10px;
     background:transparent;color:#ff9b9b;font-size:14px;cursor:pointer;font-family:inherit}
   .cancel-btn:active{background:#3a1a1a}
+  /* 관리자 */
+  .admin-only{display:none}
+  body.is-admin .admin-only{display:block}
+  .admin-tabs{display:flex;gap:8px;margin-top:10px}
+  .admin-tabs button{flex:1;padding:10px;border-radius:10px;border:1px solid var(--line);
+    background:var(--bg2);color:var(--mut);font-size:14px;cursor:pointer;font-family:inherit}
+  .admin-tabs button.on{background:var(--accent);color:var(--accent-d);border-color:var(--accent);font-weight:700}
+  .as-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .as-slot{padding:11px 0;border-radius:10px;border:1px solid var(--line);font-size:13px;
+    cursor:pointer;font-family:inherit;font-weight:500}
+  .as-slot.closed{background:var(--bg2);color:var(--mut)}
+  .as-slot.open{background:var(--accent2);color:var(--accent-d);border-color:var(--accent2)}
+  .as-slot.booked{background:#5a2424;color:#ffb3b3;border-color:#6b2b2b;cursor:not-allowed}
+  .mini-btn{padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);
+    color:var(--ink);font-size:13px;cursor:pointer;font-family:inherit}
+  .mini-btn.danger{color:#ff9b9b;border-color:#6b2b2b}
 </style>
 </head>
 <body>
@@ -188,11 +204,24 @@
     <h2>내 예약</h2>
     <div id="myList" style="margin-top:14px"></div>
   </section>
+
+  <!-- 관리자 콘솔 -->
+  <section id="adminView" class="view">
+    <h2>관리자</h2>
+    <div id="adminTabs" class="admin-tabs">
+      <button class="on" data-tab="status" onclick="adminTab('status')">현황</button>
+      <button data-tab="slots" onclick="adminTab('slots')">슬롯</button>
+      <button data-tab="manage" onclick="adminTab('manage')">프로·레슨</button>
+    </div>
+    <div id="adminBody" style="margin-top:14px"></div>
+    <button class="btn-ghost" id="dayOpenBtn" onclick="openWholeDay()" style="margin-top:8px;display:none">⚡ 이 날짜 10~22시 전체 열기</button>
+  </section>
 </div>
 
 <nav class="authed-only">
   <button class="on" onclick="show('homeView');renderHomeSafe();setTab(this)">예약</button>
   <button onclick="openMyBookings();setTab(this)">내 예약</button>
+  <button class="admin-only" onclick="openAdmin();setTab(this)">관리자</button>
   <button onclick="logout()">로그아웃</button>
 </nav>
 
