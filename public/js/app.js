@@ -83,9 +83,9 @@ if (isConfigured) {
       if (!snap.exists()) {
         await setDoc(ref, {
           name: user.displayName || "회원", email: user.email, phone: "",
-          role: "member", createdAt: serverTimestamp()
+          role: "member", penalty: { noShowCount: 0 }, createdAt: serverTimestamp()
         });
-        myProfile = { name: user.displayName || "회원", phone: "" };
+        myProfile = { name: user.displayName || "회원", phone: "", penalty: { noShowCount: 0 } };
       } else {
         myProfile = snap.data();
       }
@@ -108,7 +108,7 @@ window.signup = async () => {
     await updateProfile(cred.user, { displayName: name });
     await setDoc(doc(db, "users", cred.user.uid), {
       name, email: cred.user.email, phone: $("suPhone").value.trim(),
-      role: "member", createdAt: serverTimestamp()
+      role: "member", penalty: { noShowCount: 0 }, createdAt: serverTimestamp()
     });
   } catch (e) { alert("가입 실패: " + e.message); }
 };
