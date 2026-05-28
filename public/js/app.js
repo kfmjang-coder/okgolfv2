@@ -167,6 +167,26 @@ async function renderHome() {
     } else { up.innerHTML = ""; }
   } catch { up.innerHTML = ""; alertBox.innerHTML = ""; }
 
+  // 내 이용권
+  const pb = $("myPassBox");
+  try {
+    const ps = await getDocs(query(collection(db, "passes"), where("memberId", "==", me.uid)));
+    const usable = ps.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(p => (p.remaining || 0) > 0 && (!p.expireAt || p.expireAt >= today));
+    if (usable.length) {
+      let html = `<p class="mini-label">내 이용권</p>`;
+      usable.forEach(p => {
+        html += `<div class="pass-card">
+          <div><b>${esc(p.proName || "")}</b> · ${esc(p.lessonName || "")}</div>
+          <div class="pass-rem">잔여 <b>${p.remaining}</b><span class="sub"> / ${p.total}회</span></div>
+          ${p.expireAt ? `<div class="sub" style="margin-top:4px">만료 ${p.expireAt}</div>` : ""}
+        </div>`;
+      });
+      pb.innerHTML = html;
+    } else { pb.innerHTML = ""; }
+  } catch { pb.innerHTML = ""; }
+
   // 단골 1탭: 최근 완료/예약 1건 기준 추천
   const rb = $("rebookBox");
   try {
@@ -199,39 +219,89 @@ const fmtDate = (s) => {
   return `${d.getMonth()+1}/${d.getDate()}(${w})`;
 };
 
-// 단골 1탭 → 같은 프로·레슨으로 STEP2(날짜선택)로 점프
-window.quickRebook = (b) => {
-  draft = { proId: b.proId, proName: b.proName, lessonTypeId: b.lessonTypeId,
-            lessonName: b.lessonName, date: null, time: null, slotId: null, people: b.people || 1 };
+// 단골 1탭 → 그 예약에 쓴 이용권을 자동 선택해 STEP2로 점프
+window.quickRebook = async (b) => {
+  if (!b.passId) { alert("이 예약과 연결된 이용권을 찾을 수 없어요. 새 예약으로 진행하세요."); return startNewBooking(); }
+  // 이용권 유효성 확인
+  const ps = await getDoc(doc(db, "passes", b.passId));
+  if (!ps.exists() || (ps.data().remaining || 0) < 1) {
+    alert("이용권의 잔여 횟수가 부족합니다. 매장에 문의하세요.");
+    return;
+  }
+  pickPassForBooking(ps.id, ps.data());
   openStep2();
 };
 
-// ---------- 신규 예약 STEP1: 프로+레슨 누적선택 ----------
+// ---------- 신규 예약 STEP1: 내 이용권 선택 ----------
 window.startNewBooking = async () => {
   show("step1View");
-  const pe = $("proPick"); pe.innerHTML = "불러오는 중…";
-  const ps = await getDocs(query(collection(db, "pros"), where("active", "==", true)));
-  pe.innerHTML = "";
-  ps.forEach(d => {
-    const p = d.data();
-    const el = document.createElement("button");
-    el.className = "pick-card";
-    const photo = p.photoURL
-      ? `<img src="${p.photoURL}" class="pro-thumb">`
-      : `<div class="avatar">${(p.name||"").slice(0,2)}</div>`;
-    el.innerHTML = `${photo}
-      <div style="flex:1;text-align:left"><b>${esc(p.name)}</b>
-        <div class="sub">${esc(p.title || "프로")}</div>
-        ${p.bio ? `<div class="sub" style="margin-top:2px">${esc(p.bio)}</div>` : ""}</div>`;
-    el.onclick = () => { draft.proId = d.id; draft.proName = p.name; draftWorkHours = p.workHours || null; pickPro(el); loadLessonTypes(); };
-    pe.appendChild(el);
-  });
-  $("lessonPick").innerHTML = "";
-  $("toStep2").disabled = true;
+  const box = $("passPick");
+  box.innerHTML = `<p class="hint">불러오는 중…</p>`;
+  // 내 이용권 중 잔여>0, 만료 안 됨
+  const today = new Date().toISOString().slice(0, 10);
+  const snap = await getDocs(query(collection(db, "passes"), where("memberId", "==", me.uid)));
+  const usable = snap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(p => (p.remaining || 0) > 0 && (!p.expireAt || p.expireAt >= today));
+
   // 반복 토글 초기화
   $("recurOn").checked = false;
   $("recurOptions").classList.add("hide");
+  $("recurToggleBox").style.display = "none";
+  $("toStep2").style.display = "none";
+  $("toStep2").disabled = true;
   $("toStep2").textContent = "다음";
+  draft = { proId: null, proName: null, lessonTypeId: null, lessonName: null,
+            passId: null, date: null, time: null, slotId: null, people: 1 };
+  draftWorkHours = null;
+
+  if (usable.length === 0) {
+    box.innerHTML = `<div class="bk-card" style="text-align:center;padding:24px">
+      <div style="font-size:32px;margin-bottom:8px">🎫</div>
+      <b>예약 가능한 이용권이 없습니다</b>
+      <div class="sub" style="margin-top:8px">예약하려면 매장에서 이용권을 발급받으세요.</div>
+    </div>`;
+    return;
+  }
+
+  // 이용권 1장이면 자동 선택 → 바로 STEP2
+  if (usable.length === 1) {
+    pickPassForBooking(usable[0].id, usable[0]);
+    openStep2();
+    return;
+  }
+
+  // 여러 장: 카드 목록에서 선택
+  let html = "";
+  usable.forEach(p => {
+    html += `<button class="pick-card pass-pick" onclick="pickPassForBooking('${p.id}', ${JSON.stringify(p).replace(/"/g,'&quot;')})">
+      <div style="flex:1;text-align:left">
+        <b>${esc(p.proName || "")}</b> · ${esc(p.lessonName || "")}
+        <div class="sub" style="margin-top:4px">잔여 <b style="color:var(--accent)">${p.remaining}</b>/${p.total}회${p.expireAt?` · 만료 ${p.expireAt}`:""}</div>
+      </div>
+      <span class="chev">›</span>
+    </button>`;
+  });
+  box.innerHTML = html;
+};
+
+// 이용권 선택 → draft에 정보 박고 반복토글·다음버튼 활성화
+window.pickPassForBooking = (passId, passOrJson) => {
+  const p = typeof passOrJson === "string" ? JSON.parse(passOrJson.replace(/&quot;/g,'"')) : passOrJson;
+  draft.passId = passId;
+  draft.proId = p.proId; draft.proName = p.proName;
+  draft.lessonTypeId = p.lessonTypeId; draft.lessonName = p.lessonName;
+  // 운영시간 가져오기 (반복예약 시간 옵션용)
+  getDoc(doc(db, "pros", p.proId)).then(s => {
+    if (s.exists()) draftWorkHours = s.data().workHours || null;
+  });
+  // 선택 표시
+  document.querySelectorAll("#passPick .pick-card").forEach(c => c.classList.remove("on"));
+  if (event && event.currentTarget) event.currentTarget.classList.add("on");
+  // 반복 토글·다음 버튼 노출
+  $("recurToggleBox").style.display = "block";
+  $("toStep2").style.display = "block";
+  $("toStep2").disabled = false;
 };
 
 // 반복 토글 ON/OFF
@@ -276,27 +346,6 @@ window.step1Next = () => {
     registerRecurring();
   } else openStep2();
 };
-function pickPro(el) {
-  document.querySelectorAll("#proPick .pick-card").forEach(c => c.classList.remove("on"));
-  el.classList.add("on");
-}
-async function loadLessonTypes() {
-  const le = $("lessonPick"); le.innerHTML = "";
-  const lsSnap = await getDocs(query(collection(db, "lessonTypes"), where("active", "==", true)));
-  const ls = lsSnap.docs.sort((a, b) => (a.data().order || 0) - (b.data().order || 0));
-  ls.forEach(d => {
-    const l = d.data();
-    const el = document.createElement("button");
-    el.className = "chip";
-    el.textContent = `${l.name} · ${l.durationMin}분`;
-    el.onclick = () => {
-      draft.lessonTypeId = d.id; draft.lessonName = l.name;
-      document.querySelectorAll("#lessonPick .chip").forEach(c => c.classList.remove("on"));
-      el.classList.add("on"); $("toStep2").disabled = false;
-    };
-    le.appendChild(el);
-  });
-}
 window.openStep2 = openStep2;
 function openStep2() {
   show("step2View");
@@ -445,17 +494,27 @@ window.confirmBooking = async () => {
     return;
   }
   const btn = $("cfBtn"); btn.disabled = true; btn.textContent = "예약 중…";
+  if (!draft.passId) { alert("이용권 정보가 없습니다. 다시 시도해주세요."); btn.disabled = false; btn.textContent = "예약 확정"; return; }
   try {
     await runTransaction(db, async (tx) => {
+      // 1) 모든 읽기 먼저
       const sRef = doc(db, "slots", draft.slotId);
+      const pRef = doc(db, "passes", draft.passId);
       const fresh = await tx.get(sRef);
+      const passSnap = await tx.get(pRef);
       if (!fresh.exists() || fresh.data().status !== "open")
         throw new Error("방금 다른 분이 예약했어요. 다른 시간을 선택해주세요.");
+      if (!passSnap.exists()) throw new Error("이용권을 찾을 수 없습니다.");
+      const rem = passSnap.data().remaining || 0;
+      if (rem < 1) throw new Error("이용권 잔여 횟수가 없습니다.");
+      // 2) 모든 쓰기
       tx.update(sRef, { status: "booked", bookedBy: me.uid });
+      tx.update(pRef, { remaining: rem - 1 });
       const bRef = doc(collection(db, "bookings"));
       tx.set(bRef, {
         slotId: draft.slotId, proId: draft.proId, proName: draft.proName,
         lessonTypeId: draft.lessonTypeId, lessonName: draft.lessonName,
+        passId: draft.passId,
         memberId: me.uid, memberName: $("cfName").value,
         date: draft.date, time: draft.time, people: parseInt($("cfPeople").value, 10),
         request: $("cfRequest").value, status: "confirmed", createdAt: serverTimestamp()
@@ -674,7 +733,7 @@ window.cancelBooking = async (bookingId, slotId, date, time) => {
       return;
     }
   }
-  if (!confirm("이 예약을 취소할까요? 취소하면 해당 시간이 다시 열립니다.")) return;
+  if (!confirm("이 예약을 취소할까요? 취소하면 이용권이 1회 복원되고 해당 시간이 다시 열립니다.")) return;
   try {
     await runTransaction(db, async (tx) => {
       const bRef = doc(db, "bookings", bookingId);
@@ -684,10 +743,19 @@ window.cancelBooking = async (bookingId, slotId, date, time) => {
       const sSnap = sRef ? await tx.get(sRef) : null;
       if (!bSnap.exists() || bSnap.data().status !== "confirmed")
         throw new Error("이미 취소되었거나 처리할 수 없는 예약입니다.");
+      const passId = bSnap.data().passId;
+      const pRef = passId ? doc(db, "passes", passId) : null;
+      const pSnap = pRef ? await tx.get(pRef) : null;
       // 2) 그다음 모든 쓰기
       tx.update(bRef, { status: "cancelled" });
       if (sSnap && sSnap.exists())
         tx.update(sRef, { status: "open", bookedBy: null });
+      // 이용권 환원
+      if (pSnap && pSnap.exists()) {
+        const rem = pSnap.data().remaining || 0;
+        const total = pSnap.data().total || rem + 1;
+        tx.update(pRef, { remaining: Math.min(total, rem + 1) });
+      }
     });
     alert("예약이 취소되었습니다.");
     window.openMyBookings();
@@ -750,38 +818,21 @@ async function renderAdminStatus() {
   box.innerHTML = html;
 }
 
-// 출석 처리: present면 수강권 1회 차감(있으면), noshow면 페널티 카운트
+// 출석 처리: 예약 확정 시 이미 이용권 차감됨. 여기서는 출석/노쇼 표시만.
+// 노쇼는 추가로 페널티 카운트 +1 (이용권은 환원하지 않음)
 window.markAttendance = async (bookingId, memberId, lessonTypeId, status) => {
   const label = status === "present" ? "출석" : "노쇼";
-  if (!confirm(`${label} 처리할까요?${status === "present" ? "\n(수강권 보유 시 1회 차감됩니다)" : ""}`)) return;
+  if (!confirm(`${label} 처리할까요?`)) return;
   try {
     await runTransaction(db, async (tx) => {
       const bRef = doc(db, "bookings", bookingId);
-      // 차감할 수강권 찾기 (해당 레슨 또는 전체, 잔여>0, 만료 안 됨)
-      let passRef = null, passData = null;
-      if (status === "present") {
-        const today = new Date().toISOString().slice(0, 10);
-        const ps = await getDocs(query(collection(db, "passes"), where("memberId", "==", memberId)));
-        const usable = ps.docs
-          .map(d => ({ ref: d.ref, ...d.data() }))
-          .filter(p => (p.remaining || 0) > 0 && (!p.expireAt || p.expireAt >= today));
-        if (usable.length) { passRef = usable[0].ref; passData = usable[0]; }
-      }
-      // 노쇼 페널티: 회원 문서 읽기
       let userRef = null, userSnap = null;
       if (status === "noshow") {
         userRef = doc(db, "users", memberId);
         userSnap = await tx.get(userRef);
       }
-      let freshPass = null;
-      if (passRef) freshPass = await tx.get(passRef);
-      // 쓰기
       tx.update(bRef, { status: "done", attendance: status });
-      if (passRef && freshPass.exists()) {
-        const rem = (freshPass.data().remaining || 0) - 1;
-        tx.update(passRef, { remaining: Math.max(0, rem) });
-      }
-      if (userRef && userSnap.exists()) {
+      if (userRef && userSnap && userSnap.exists()) {
         const cur = userSnap.data().penalty?.noShowCount || 0;
         tx.update(userRef, { "penalty.noShowCount": cur + 1 });
       }
@@ -1375,18 +1426,25 @@ const esc = (s) => (s || "").replace(/[&<>"]/g, c =>
 window.registerRecurring = async () => {
   const proId = draft.proId, lessonTypeId = draft.lessonTypeId;
   const proName = draft.proName, lessonName = draft.lessonName;
+  const passId = draft.passId;
   const weekday = parseInt($("rcWeekday").value, 10);
   const time = $("rcTime").value;
   const weeks = parseInt($("rcWeeks").value, 10);
   const everyOther = $("rcEvery").value === "2";
-  if (!proId || !lessonTypeId) return alert("프로와 레슨을 먼저 선택하세요.");
-  if (!time) return alert("시간을 선택하세요. (시간 목록이 비어있으면 프로 운영시간을 확인하세요)");
+  if (!passId) return alert("이용권을 먼저 선택하세요.");
+  if (!time) return alert("시간을 선택하세요.");
 
   const btn = $("toStep2"); btn.disabled = true; btn.textContent = "등록 중…";
   try {
+    // 이용권 잔여 확인
+    const passSnap = await getDoc(doc(db, "passes", passId));
+    if (!passSnap.exists()) throw new Error("이용권을 찾을 수 없습니다.");
+    const passRem = passSnap.data().remaining || 0;
+    if (passRem < 1) throw new Error("이용권 잔여 횟수가 없습니다.");
+
     // 패턴 문서 저장
     await addDoc(collection(db, "recurring"), {
-      memberId: me.uid, proId, proName, lessonTypeId, lessonName,
+      memberId: me.uid, proId, proName, lessonTypeId, lessonName, passId,
       weekday, time, everyOther, weeks, createdAt: serverTimestamp()
     });
 
@@ -1405,8 +1463,8 @@ window.registerRecurring = async () => {
       }
     }
 
-    // 각 날짜의 열린 슬롯을 트랜잭션 예약
-    let ok = 0, skip = 0;
+    // 각 날짜의 열린 슬롯을 트랜잭션 예약 + 이용권 차감
+    let ok = 0, skip = 0, noPass = 0;
     for (const date of dates) {
       const ss = await getDocs(query(collection(db, "slots"),
         where("proId", "==", proId), where("date", "==", date), where("time", "==", time)));
@@ -1415,25 +1473,34 @@ window.registerRecurring = async () => {
       try {
         await runTransaction(db, async (tx) => {
           const sRef = doc(db, "slots", slotId);
+          const pRef = doc(db, "passes", passId);
           const fresh = await tx.get(sRef);
+          const pFresh = await tx.get(pRef);
           if (!fresh.exists() || fresh.data().status !== "open") throw new Error("taken");
+          const rem = pFresh.data().remaining || 0;
+          if (rem < 1) throw new Error("nopass");
           tx.update(sRef, { status: "booked", bookedBy: me.uid });
+          tx.update(pRef, { remaining: rem - 1 });
           tx.set(doc(collection(db, "bookings")), {
-            slotId, proId, proName, lessonTypeId, lessonName,
+            slotId, proId, proName, lessonTypeId, lessonName, passId,
             memberId: me.uid, memberName: myProfile?.name || "회원",
             date, time, people: 1, request: "[반복예약]",
             status: "confirmed", createdAt: serverTimestamp()
           });
         });
         ok++;
-      } catch { skip++; }
+      } catch (e) {
+        if (e.message === "nopass") { noPass++; break; }   // 이용권 소진 → 중단
+        skip++;
+      }
     }
 
-    if (ok === 0 && skip > 0) {
-      alert(`반복 패턴은 저장됐지만, 예약된 건이 없어요.\n\n선택한 요일·시간(${time})에 열린 슬롯이 없습니다.\n관리자가 해당 날짜의 슬롯을 먼저 열어야 자동 예약됩니다.\n(불가 ${skip}건)`);
-    } else {
-      alert(`반복예약 완료!\n예약 성공: ${ok}건${skip ? ` / 불가(미개설·마감): ${skip}건` : ""}`);
-    }
+    let msg = `반복예약 완료!\n예약 성공: ${ok}건`;
+    if (skip) msg += ` / 불가(미개설·마감): ${skip}건`;
+    if (noPass) msg += `\n⚠️ 이용권이 소진되어 ${noPass}건 이후는 예약하지 못했습니다.`;
+    if (ok === 0 && skip > 0 && !noPass)
+      msg = `반복 패턴은 저장됐지만, 예약된 건이 없어요.\n\n선택한 요일·시간(${time})에 열린 슬롯이 없습니다.\n관리자가 해당 날짜의 슬롯을 먼저 열어야 자동 예약됩니다.`;
+    alert(msg);
     show("homeView"); renderHome();
   } catch (e) {
     alert("반복예약 등록 실패: " + e.message);
@@ -1547,23 +1614,39 @@ window.deletePass = async (passId, memberId) => {
   } catch (e) { alert("삭제 실패: " + e.message); }
 };
 // 특정 회원에게 수강권 발급
+let passModalCtx = null;  // {memberId, memberName}
 window.issuePassFor = async (memberId, memberName) => {
-  const lessonName = prompt("수강권 이름? (예: 개인30분 10회권)", "개인30분 10회권");
-  if (lessonName === null) return;                 // 취소
-  if (!lessonName.trim()) { alert("수강권 이름을 입력하세요."); return; }
-  const totalStr = prompt("총 횟수?", "10");
-  if (totalStr === null) return;                   // 취소
-  const total = parseInt(totalStr, 10);
+  passModalCtx = { memberId, memberName };
+  $("passModalMember").textContent = `${memberName}님에게 발급`;
+  // 프로·레슨 옵션
+  const [ps, ls] = await Promise.all([
+    getDocs(query(collection(db, "pros"), where("active", "==", true))),
+    getDocs(query(collection(db, "lessonTypes"), where("active", "==", true)))
+  ]);
+  $("pmPro").innerHTML = ps.docs.map(d => `<option value="${d.id}" data-name="${esc(d.data().name)}">${esc(d.data().name)}</option>`).join("");
+  $("pmLesson").innerHTML = ls.docs.sort((a,b)=>(a.data().order||0)-(b.data().order||0))
+    .map(d => `<option value="${d.id}" data-name="${esc(d.data().name)}">${esc(d.data().name)}</option>`).join("");
+  $("pmTotal").value = "10"; $("pmExpire").value = "";
+  $("passModal").classList.remove("hide");
+};
+window.closePassModal = () => { $("passModal").classList.add("hide"); passModalCtx = null; };
+window.submitIssuePass = async () => {
+  if (!passModalCtx) return;
+  const proSel = $("pmPro"), lsSel = $("pmLesson");
+  if (!proSel.value || !lsSel.value) { alert("프로와 레슨을 선택하세요."); return; }
+  const total = parseInt($("pmTotal").value, 10);
   if (isNaN(total) || total < 1) { alert("총 횟수를 올바르게 입력하세요."); return; }
-  const expireAt = prompt("만료일? (YYYY-MM-DD, 없으면 비워두기)", "");
-  if (expireAt === null) return;                   // 취소
-  if (!confirm(`${memberName}님에게\n${lessonName.trim()} (${total}회)${expireAt?`\n만료 ${expireAt}`:""}\n\n발급할까요?`)) return;
+  const data = {
+    memberId: passModalCtx.memberId, memberName: passModalCtx.memberName,
+    proId: proSel.value, proName: proSel.selectedOptions[0].dataset.name,
+    lessonTypeId: lsSel.value, lessonName: lsSel.selectedOptions[0].dataset.name,
+    total, remaining: total, expireAt: $("pmExpire").value || "",
+    status: "active", createdAt: serverTimestamp()
+  };
   try {
-    await addDoc(collection(db, "passes"),
-      { memberId, memberName, lessonName: lessonName.trim(), total, remaining: total,
-        expireAt: expireAt.trim(), status: "active", createdAt: serverTimestamp() });
-    alert(`${memberName}님에게 ${lessonName.trim()}(${total}회) 발급 완료`);
-    renderAdminMembers();
+    await addDoc(collection(db, "passes"), data);
+    alert(`${data.memberName}님에게 ${data.proName}·${data.lessonName} (${total}회) 발급 완료`);
+    closePassModal(); renderAdminMembers();
   } catch (e) { alert("발급 실패: " + e.message); }
 };
 // 노쇼 카운트 초기화

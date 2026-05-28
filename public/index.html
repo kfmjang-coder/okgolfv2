@@ -199,6 +199,14 @@
   .avatar.lg{width:96px;height:96px;border-radius:50%;font-size:32px;display:inline-flex;align-items:center;justify-content:center}
   .pro-card{cursor:pointer}
   .pro-card .chev{color:var(--mut);font-size:22px}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}
+  .modal-card{background:var(--bg2);border:1px solid var(--line);border-radius:16px;padding:20px;width:100%;max-width:380px;max-height:90vh;overflow-y:auto}
+  .pass-card{background:var(--card);border:1px solid var(--accent2);border-left:4px solid var(--accent);
+    border-radius:14px;padding:14px 16px;margin-bottom:8px}
+  .pass-card .pass-rem{margin-top:6px;font-size:15px}
+  .pass-card .pass-rem b{color:var(--accent);font-size:22px}
+  .pass-pick{justify-content:space-between !important}
+  .pass-pick.on{border-color:var(--accent);background:var(--card)}
   @keyframes flashHl{0%,100%{box-shadow:0 0 0 0 transparent}30%{box-shadow:0 0 0 3px var(--accent)}}
   .att-badge{font-size:11px;padding:2px 8px;border-radius:999px;margin-left:6px}
   .att-badge.ok{background:#16401f;color:var(--accent)}
@@ -256,25 +264,24 @@
     <div id="alertBox"></div>
     <h2>예약</h2>
     <div id="upcomingBox"></div>
+    <div id="myPassBox"></div>
     <div id="rebookBox"></div>
     <button class="btn-ghost" onclick="startNewBooking()" style="margin-top:16px">+ 다른 프로·시간으로 예약</button>
   </section>
 
   <!-- STEP1: 프로+레슨 -->
   <section id="step1View" class="view">
-    <div class="topbar"><button class="back" onclick="show('homeView')">‹</button><h3 style="margin:0">프로와 레슨 선택</h3></div>
-    <p class="mini-label">프로</p>
-    <div id="proPick"></div>
-    <p class="mini-label">레슨 종류</p>
-    <div id="lessonPick"></div>
+    <div class="topbar"><button class="back" onclick="show('homeView')">‹</button><h3 style="margin:0">이용권 선택</h3></div>
+    <p class="sub" style="margin-bottom:10px">사용할 이용권을 선택하세요.</p>
+    <div id="passPick"></div>
 
-    <div class="recur-toggle">
+    <div class="recur-toggle" id="recurToggleBox" style="display:none">
       <label style="display:flex;align-items:center;justify-content:space-between;cursor:pointer">
         <span>🔁 반복 예약으로 등록</span>
         <input type="checkbox" id="recurOn" onchange="toggleRecurOptions()" style="width:auto;margin:0;transform:scale(1.3)">
       </label>
       <div id="recurOptions" class="hide" style="margin-top:14px">
-        <p class="sub" style="margin-bottom:10px">선택한 프로·레슨으로 매주 같은 요일·시간에 자동 예약합니다.</p>
+        <p class="sub" style="margin-bottom:10px">선택한 이용권으로 매주 같은 요일·시간에 자동 예약합니다.</p>
         <div class="field"><label>요일</label>
           <select id="rcWeekday"><option value="1">월</option><option value="2">화</option><option value="3">수</option><option value="4">목</option><option value="5">금</option><option value="6">토</option><option value="0">일</option></select></div>
         <div class="field"><label>시간</label><select id="rcTime"></select></div>
@@ -285,7 +292,7 @@
       </div>
     </div>
 
-    <button id="toStep2" class="btn-primary" onclick="step1Next()" disabled>다음</button>
+    <button id="toStep2" class="btn-primary" onclick="step1Next()" disabled style="display:none">다음</button>
   </section>
 
   <!-- STEP2: 날짜+슬롯접기 -->
@@ -343,6 +350,22 @@
     <button class="btn-primary" onclick="saveProEdit()">저장</button>
     <button class="btn-ghost danger" onclick="deletePro()" style="margin-top:10px">이 프로 삭제</button>
   </section>
+
+  <!-- 수강권 발급 모달 -->
+  <div id="passModal" class="modal hide">
+    <div class="modal-card">
+      <h3 style="margin:0 0 14px">수강권 발급</h3>
+      <div class="sub" id="passModalMember" style="margin-bottom:12px"></div>
+      <div class="field"><label>담당 프로</label><select id="pmPro"></select></div>
+      <div class="field"><label>레슨 종류</label><select id="pmLesson"></select></div>
+      <div class="field"><label>총 횟수</label><input id="pmTotal" type="number" min="1" value="10"></div>
+      <div class="field"><label>만료일 (선택)</label><input id="pmExpire" type="date"></div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button class="btn-ghost" onclick="closePassModal()" style="flex:1">취소</button>
+        <button class="btn-primary" onclick="submitIssuePass()" style="flex:1">발급</button>
+      </div>
+    </div>
+  </div>
 
   <!-- 관리자 콘솔 -->
   <section id="adminView" class="view">
