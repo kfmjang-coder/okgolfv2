@@ -14,6 +14,11 @@
     --accent:#b6ff3c; --accent-d:#08210f; --accent2:#5fd97a;
     --ink:#eaf6ec; --mut:#8fb39a; --off:#2a4636;
   }
+  body[data-theme="light"]{
+    --bg:#f4f7f2; --bg2:#ffffff; --card:#ffffff; --line:#d8e3d5;
+    --accent:#3b8a1e; --accent-d:#ffffff; --accent2:#4fa733;
+    --ink:#1a2e1f; --mut:#6b806f; --off:#c5d3c2;
+  }
   *{box-sizing:border-box;margin:0;padding:0}
   html{overscroll-behavior-y:contain}
   body{font-family:Pretendard,system-ui,sans-serif;background:var(--bg);color:var(--ink);
@@ -163,6 +168,15 @@
   .as-slot.booked{background:#5a2424;color:#ffb3b3;border-color:#6b2b2b;cursor:not-allowed}
   .as-slot.blocked{background:#3a2f08;color:#caa84a;border-color:#5c4a12;cursor:not-allowed;text-decoration:line-through}
   .block-box{margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+  .dow-pick{display:flex;gap:6px;margin-top:10px;justify-content:space-between}
+  .dow-chip{flex:1;cursor:pointer}
+  .dow-chip input{display:none}
+  .dow-chip span{display:block;text-align:center;padding:10px 0;border-radius:10px;border:1px solid var(--line);
+    background:var(--bg2);color:var(--mut);font-size:14px}
+  .dow-chip input:checked+span{background:var(--accent);color:var(--accent-d);border-color:var(--accent);font-weight:700}
+  .alert-banner{background:var(--bg2);border:1px solid var(--accent2);border-left:4px solid var(--accent2);
+    border-radius:12px;padding:14px 16px;margin-bottom:16px;font-size:14px;line-height:1.5}
+  .alert-banner.today{border-color:var(--accent);border-left-color:var(--accent);background:var(--card)}
   .att-badge{font-size:11px;padding:2px 8px;border-radius:999px;margin-left:6px}
   .att-badge.ok{background:#16401f;color:var(--accent)}
   .att-badge.no{background:#5a2424;color:#ffb3b3}
@@ -184,7 +198,10 @@
 <body>
 <header>
   <div class="logo" id="storeLogo">OK골프</div>
-  <div class="nav-user" id="navUser"></div>
+  <div style="display:flex;align-items:center;gap:12px">
+    <button id="themeBtn" onclick="toggleTheme()" style="background:none;border:none;font-size:20px;cursor:pointer">🌙</button>
+    <div class="nav-user" id="navUser"></div>
+  </div>
 </header>
 
 <div class="wrap">
@@ -213,6 +230,7 @@
 
   <!-- 홈 -->
   <section id="homeView" class="view">
+    <div id="alertBox"></div>
     <h2>예약</h2>
     <div id="upcomingBox"></div>
     <div id="rebookBox"></div>
@@ -286,11 +304,11 @@
     <div id="adminTabs" class="admin-tabs">
       <button class="on" data-tab="status" onclick="adminTab('status')">현황</button>
       <button data-tab="slots" onclick="adminTab('slots')">슬롯</button>
-      <button data-tab="manage" onclick="adminTab('manage')">프로·레슨</button>
+      <button data-tab="members" onclick="adminTab('members')">회원</button>
+      <button data-tab="manage" onclick="adminTab('manage')">설정</button>
     </div>
     <div id="adminBody" style="margin-top:14px"></div>
     <button class="btn-ghost" id="dayOpenBtn" onclick="openWholeDay()" style="margin-top:8px;display:none">⚡ 이 날짜 10~22시 전체 열기</button>
-    <button class="btn-ghost admin-only" onclick="issuePass()" style="margin-top:8px">🎫 수강권 발급</button>
   </section>
 
   <!-- 게시판 -->

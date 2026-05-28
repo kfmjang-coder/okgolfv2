@@ -35,12 +35,22 @@ if (!isConfigured) {
   });
 }
 
-// ---------- 매장 이름 (관리자가 편집) ----------
+// ---------- 매장 설정 (관리자가 편집) ----------
 let storeName = "OK골프";
+let bookWindowWeeks = 4;     // 예약 가능 범위(주)
+let cutoffHours = 2;         // 예약/취소 마감: 시작 N시간 전
+let noShowLimit = 3;         // 노쇼 누적 N회 시 제한
+let theme = "dark";          // dark | light (개인 설정, localStorage 미사용→메모리+설정문서)
 async function loadStoreName() {
   try {
     const snap = await getDoc(doc(db, "settings", "store"));
-    if (snap.exists() && snap.data().name) storeName = snap.data().name;
+    if (snap.exists()) {
+      const s = snap.data();
+      if (s.name) storeName = s.name;
+      if (s.bookWindowWeeks) bookWindowWeeks = s.bookWindowWeeks;
+      if (s.cutoffHours != null) cutoffHours = s.cutoffHours;
+      if (s.noShowLimit != null) noShowLimit = s.noShowLimit;
+    }
   } catch {}
   applyStoreName();
 }
@@ -50,6 +60,17 @@ function applyStoreName() {
   if (b) b.textContent = storeName;
   document.title = storeName + " 레슨 예약";
 }
+// 테마 적용·토글 (개인 설정, users 문서에 저장)
+function applyTheme() {
+  document.body.setAttribute("data-theme", theme);
+  const btn = $("themeBtn");
+  if (btn) btn.textContent = theme === "dark" ? "🌙" : "☀️";
+}
+window.toggleTheme = async () => {
+  theme = theme === "dark" ? "light" : "dark";
+  applyTheme();
+  if (me) { try { await updateDoc(doc(db, "users", me.uid), { theme }); } catch {} }
+};
 
 // ---------- 인증 ----------
 if (isConfigured) {
@@ -69,6 +90,7 @@ if (isConfigured) {
         myProfile = snap.data();
       }
       $("navUser").textContent = myProfile.name;
+      if (myProfile.theme) { theme = myProfile.theme; applyTheme(); }
       document.body.classList.toggle("is-admin", myProfile.role === "admin");
       show("homeView");
       renderHome();
@@ -111,14 +133,30 @@ window.submitAuth = () => { if (signupMode) signup(); else login(); };
 async function renderHome() {
   // 다가오는 예약 1건
   const today = new Date().toISOString().slice(0, 10);
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
   const up = $("upcomingBox");
+  const alertBox = $("alertBox");
   try {
     const us = await getDocs(query(collection(db, "bookings"),
       where("memberId", "==", me.uid)));
     const upcoming = us.docs
       .map(d => d.data())
       .filter(b => b.status === "confirmed" && b.date >= today)
-      .sort((a, b) => a.date.localeCompare(b.date));
+      .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+
+    // 오늘/내일 예약 알림 배너
+    const todayBk = upcoming.filter(b => b.date === today);
+    const tmrBk = upcoming.filter(b => b.date === tomorrow);
+    let banner = "";
+    if (todayBk.length) {
+      const b = todayBk[0];
+      banner = `<div class="alert-banner today">🔔 <b>오늘 ${b.time}</b> ${b.proName} 레슨이 있어요!${todayBk.length>1?` 외 ${todayBk.length-1}건`:""}</div>`;
+    } else if (tmrBk.length) {
+      const b = tmrBk[0];
+      banner = `<div class="alert-banner">📅 <b>내일 ${b.time}</b> ${b.proName} 레슨이 예약되어 있어요.${tmrBk.length>1?` 외 ${tmrBk.length-1}건`:""}</div>`;
+    }
+    alertBox.innerHTML = banner;
+
     if (upcoming.length > 0) {
       const b = upcoming[0];
       up.innerHTML = `<p class="mini-label">다가오는 예약</p>
@@ -127,7 +165,7 @@ async function renderHome() {
           <div class="up-time">${fmtDate(b.date)} ${b.time}</div>
         </div>`;
     } else { up.innerHTML = ""; }
-  } catch { up.innerHTML = ""; }
+  } catch { up.innerHTML = ""; alertBox.innerHTML = ""; }
 
   // 단골 1탭: 최근 완료/예약 1건 기준 추천
   const rb = $("rebookBox");
@@ -269,7 +307,9 @@ function renderCalendar() {
   const bar = $("dateBar");
   const year = calCursor.getFullYear(), month = calCursor.getMonth();
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const firstDay = new Date(year, month, 1).getDay();      // 0=일
+  // 예약 가능 마지막 날
+  const maxDate = new Date(today); maxDate.setDate(maxDate.getDate() + bookWindowWeeks * 7);
+  const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const W = ["일", "월", "화", "수", "목", "금", "토"];
 
@@ -280,15 +320,15 @@ function renderCalendar() {
     </div>
     <div class="cal-grid">`;
   W.forEach((w, i) => html += `<div class="cal-dow ${i===0?'sun':''} ${i===6?'sat':''}">${w}</div>`);
-  for (let i = 0; i < firstDay; i++) html += `<div></div>`; // 빈칸
+  for (let i = 0; i < firstDay; i++) html += `<div></div>`;
   for (let d = 1; d <= daysInMonth; d++) {
     const cur = new Date(year, month, d);
     const ds = `${year}-${String(month+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
-    const past = cur < today;
+    const disabled = cur < today || cur > maxDate;  // 과거 또는 오픈범위 초과
     const dow = cur.getDay();
     const sel = draft.date === ds ? "sel" : "";
-    const cls = past ? "cal-day past" : `cal-day ${sel} ${dow===0?'sun':''} ${dow===6?'sat':''}`;
-    html += past
+    const cls = disabled ? "cal-day past" : `cal-day ${sel} ${dow===0?'sun':''} ${dow===6?'sat':''}`;
+    html += disabled
       ? `<div class="${cls}">${d}</div>`
       : `<button class="${cls}" onclick="pickDate('${ds}')">${d}</button>`;
   }
@@ -376,6 +416,19 @@ function openConfirm() {
 }
 
 window.confirmBooking = async () => {
+  // 마감 시간 검사
+  const slotDateTime = new Date(`${draft.date}T${draft.time}:00`);
+  const cutoff = new Date(slotDateTime.getTime() - cutoffHours * 3600 * 1000);
+  if (new Date() > cutoff) {
+    alert(`예약 마감 시간이 지났습니다.\n레슨 시작 ${cutoffHours}시간 전까지만 예약할 수 있어요.`);
+    return;
+  }
+  // 노쇼 제한 검사
+  const noShow = myProfile?.penalty?.noShowCount || 0;
+  if (noShow >= noShowLimit) {
+    alert(`노쇼가 ${noShow}회 누적되어 예약이 제한되었습니다.\n매장에 문의해주세요.`);
+    return;
+  }
   const btn = $("cfBtn"); btn.disabled = true; btn.textContent = "예약 중…";
   try {
     await runTransaction(db, async (tx) => {
@@ -483,7 +536,7 @@ function bookingCard(b, cancelable) {
     : b.attendance === "noshow" ? "노쇼"
     : (b.status === "done" || b.date < new Date().toISOString().slice(0,10)) ? "완료" : "예약됨";
   const btn = cancelable
-    ? `<button class="cancel-btn" onclick="cancelBooking('${b.id}','${b.slotId}')">예약 취소</button>`
+    ? `<button class="cancel-btn" onclick="cancelBooking('${b.id}','${b.slotId}','${b.date}','${b.time}')">예약 취소</button>`
     : "";
   // 완료(출석)된 레슨: 레슨일지 + 별점
   let extra = "";
@@ -519,7 +572,16 @@ window.rateBooking = async (bookingId, rating) => {
 };
 
 // 취소: 예약을 cancelled로 + 슬롯을 다시 open으로 (트랜잭션)
-window.cancelBooking = async (bookingId, slotId) => {
+window.cancelBooking = async (bookingId, slotId, date, time) => {
+  // 취소 마감 검사
+  if (date && time) {
+    const slotDateTime = new Date(`${date}T${time}:00`);
+    const cutoff = new Date(slotDateTime.getTime() - cutoffHours * 3600 * 1000);
+    if (new Date() > cutoff) {
+      alert(`취소 마감 시간이 지났습니다.\n레슨 시작 ${cutoffHours}시간 전까지만 취소할 수 있어요.\n매장에 문의해주세요.`);
+      return;
+    }
+  }
   if (!confirm("이 예약을 취소할까요? 취소하면 해당 시간이 다시 열립니다.")) return;
   try {
     await runTransaction(db, async (tx) => {
@@ -553,6 +615,7 @@ window.adminTab = (tab) => {
   if (dayBtn) dayBtn.style.display = tab === "slots" ? "block" : "none";
   if (tab === "status") renderAdminStatus();
   else if (tab === "slots") renderAdminSlots();
+  else if (tab === "members") renderAdminMembers();
   else if (tab === "manage") renderAdminManage();
 };
 
@@ -668,8 +731,72 @@ async function renderAdminSlots() {
     <p class="mini-label">슬롯 열기 / 닫기</p>
     <select id="asPro" onchange="onAdminSlotChange()">${opts}</select>
     <input type="date" id="asDate" min="${today}" onchange="onAdminSlotChange()" style="margin-top:10px">
-    <div id="asGrid" style="margin-top:14px"><p class="hint">프로와 날짜를 선택하세요.</p></div>`;
+    <div id="asGrid" style="margin-top:14px"><p class="hint">프로와 날짜를 선택하세요.</p></div>
+    <div class="block-box">
+      <p class="mini-label">⚡ 기간 일괄 오픈</p>
+      <div class="sub" style="margin-bottom:8px">선택한 프로의 운영시간을 향후 기간만큼 한 번에 엽니다.</div>
+      <select id="bulkWeeks" style="width:100%">
+        <option value="1">향후 1주</option><option value="2">향후 2주</option>
+        <option value="4" selected>향후 4주</option><option value="8">향후 8주</option>
+      </select>
+      <div class="dow-pick" id="bulkDow">
+        ${["일","월","화","수","목","금","토"].map((w,i) =>
+          `<label class="dow-chip"><input type="checkbox" value="${i}" ${i>=1&&i<=5?"checked":""}><span>${w}</span></label>`).join("")}
+      </div>
+      <button class="btn-ghost" onclick="bulkOpen()" style="margin-top:10px">기간 일괄 오픈</button>
+    </div>`;
 }
+
+// 향후 N주 일괄 오픈 (선택 프로, 요일 필터, 차단 제외)
+window.bulkOpen = async () => {
+  const proId = $("asPro").value;
+  if (!proId) { alert("먼저 프로를 선택하세요."); return; }
+  const opt = $("asPro").selectedOptions[0];
+  const startH = opt?.dataset.start ? parseInt(opt.dataset.start.slice(0,2),10) : 10;
+  const endH = opt?.dataset.end ? parseInt(opt.dataset.end.slice(0,2),10) : 22;
+  const weeks = parseInt($("bulkWeeks").value, 10);
+  const checkedDows = [...document.querySelectorAll('#bulkDow input:checked')].map(c => parseInt(c.value, 10));
+  if (!checkedDows.length) { alert("요일을 하나 이상 선택하세요."); return; }
+  const W = ["일","월","화","수","목","금","토"];
+  const dowText = checkedDows.map(d => W[d]).join("·");
+  if (!confirm(`${opt.textContent} · 향후 ${weeks}주 · ${dowText}\n${startH}~${endH}시를 일괄 오픈할까요?`)) return;
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  // 대상 날짜 수집
+  const dates = [];
+  for (let i = 0; i < weeks * 7; i++) {
+    const d = new Date(today); d.setDate(d.getDate() + i);
+    if (!checkedDows.includes(d.getDay())) continue;
+    dates.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`);
+  }
+  // 기존 슬롯·차단 조회 (한 번에)
+  const [allSlots, allBlocks] = await Promise.all([
+    getDocs(query(collection(db, "slots"), where("proId", "==", proId))),
+    getDocs(query(collection(db, "blocks"), where("proId", "==", proId)))
+  ]);
+  const have = new Set();
+  allSlots.docs.forEach(s => have.add(s.data().date + " " + s.data().time));
+  const blocksByDate = {};
+  allBlocks.docs.forEach(b => { (blocksByDate[b.data().date] ||= []).push(b.data()); });
+
+  let created = 0;
+  let batch = writeBatch(db), batchCount = 0;
+  for (const date of dates) {
+    const dayBlocks = blocksByDate[date] || [];
+    for (let h = startH; h < endH; h++) for (const m of [0,20,40]) {
+      const t = String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
+      if (have.has(date + " " + t)) continue;
+      if (isBlocked(dayBlocks, t)) continue;
+      batch.set(doc(collection(db, "slots")),
+        { proId, date, time: t, durationMin: 20, status: "open", bookedBy: null });
+      created++; batchCount++;
+      if (batchCount >= 450) { await batch.commit(); batch = writeBatch(db); batchCount = 0; }
+    }
+  }
+  if (batchCount > 0) await batch.commit();
+  alert(`완료! ${created}개 슬롯을 열었습니다.`);
+  if (adminSlotState.date) onAdminSlotChange();
+};
 window.onAdminSlotChange = async () => {
   const sel = $("asPro");
   adminSlotState.proId = sel.value;
@@ -828,13 +955,39 @@ async function renderAdminManage() {
     getDocs(collection(db, "pros")),
     getDocs(collection(db, "lessonTypes"))
   ]);
-  let html = `<p class="mini-label">매장 이름</p>
+  let html = `<p class="mini-label">매장 설정</p>
     <div class="bk-card">
-      <div style="display:flex;gap:8px">
+      <label class="sub">매장 이름</label>
+      <div style="display:flex;gap:8px;margin-top:4px">
         <input id="storeNameInput" value="${esc(storeName)}" placeholder="매장 이름" style="flex:1;margin-top:0">
-        <button class="mini-btn" onclick="saveStoreName()" style="white-space:nowrap">저장</button>
       </div>
-      <div class="sub" style="margin-top:8px">화면 상단에 표시되는 이름입니다.</div>
+      <label class="sub" style="display:block;margin-top:12px">예약 가능 범위</label>
+      <div style="display:flex;gap:8px;margin-top:4px;align-items:center">
+        <select id="bookWindowInput" style="flex:1;margin-top:0">
+          <option value="1">1주 앞까지</option>
+          <option value="2">2주 앞까지</option>
+          <option value="4">4주 앞까지</option>
+          <option value="8">8주 앞까지</option>
+          <option value="12">12주 앞까지</option>
+        </select>
+      </div>
+      <div class="sub" style="margin-top:8px">회원이 오늘부터 며칠 앞까지 예약할 수 있는지 설정합니다.</div>
+      <label class="sub" style="display:block;margin-top:12px">예약·취소 마감</label>
+      <select id="cutoffInput" style="margin-top:4px">
+        <option value="0">마감 없음</option>
+        <option value="1">1시간 전까지</option>
+        <option value="2">2시간 전까지</option>
+        <option value="6">6시간 전까지</option>
+        <option value="24">24시간 전까지</option>
+      </select>
+      <label class="sub" style="display:block;margin-top:12px">노쇼 제한</label>
+      <select id="noShowInput" style="margin-top:4px">
+        <option value="99">제한 없음</option>
+        <option value="2">2회 누적 시 차단</option>
+        <option value="3">3회 누적 시 차단</option>
+        <option value="5">5회 누적 시 차단</option>
+      </select>
+      <button class="mini-btn" onclick="saveStoreSettings()" style="margin-top:12px;width:100%">전체 설정 저장</button>
     </div>
     <p class="mini-label" style="margin-top:20px">프로</p>`;
   ps.docs.forEach(d => {
@@ -859,18 +1012,27 @@ async function renderAdminManage() {
   });
   html += `<button class="btn-ghost" onclick="addLesson()" style="margin-top:6px">+ 레슨 추가</button>`;
   box.innerHTML = html;
+  // select 현재값 반영
+  const bw = $("bookWindowInput"); if (bw) bw.value = String(bookWindowWeeks);
+  const co = $("cutoffInput"); if (co) co.value = String(cutoffHours);
+  const ns = $("noShowInput"); if (ns) ns.value = String(noShowLimit);
 }
 window.toggleProActive = async (id, cur) => {
   await updateDoc(doc(db, "pros", id), { active: !cur }); renderAdminManage();
 };
-// 매장 이름 저장
-window.saveStoreName = async () => {
+// 매장 설정 저장 (이름·범위·마감·노쇼)
+window.saveStoreSettings = async () => {
   const name = $("storeNameInput").value.trim();
+  const weeks = parseInt($("bookWindowInput").value, 10);
+  const cutoff = parseInt($("cutoffInput").value, 10);
+  const ns = parseInt($("noShowInput").value, 10);
   if (!name) { alert("매장 이름을 입력하세요."); return; }
   try {
-    await setDoc(doc(db, "settings", "store"), { name }, { merge: true });
-    storeName = name; applyStoreName();
-    alert("매장 이름이 저장되었습니다.");
+    await setDoc(doc(db, "settings", "store"),
+      { name, bookWindowWeeks: weeks, cutoffHours: cutoff, noShowLimit: ns }, { merge: true });
+    storeName = name; bookWindowWeeks = weeks; cutoffHours = cutoff; noShowLimit = ns;
+    applyStoreName();
+    alert("매장 설정이 저장되었습니다.");
   } catch (e) { alert("저장 실패: " + e.message); }
 };
 window.addPro = async () => {
@@ -1167,6 +1329,66 @@ window.openPasses = async () => {
 };
 
 // 관리자: 수강권 발급
+// ---------- 회원 관리 ----------
+let allMembers = [];
+async function renderAdminMembers() {
+  const box = $("adminBody");
+  box.innerHTML = `<p class="hint">불러오는 중…</p>`;
+  const snap = await getDocs(collection(db, "users"));
+  allMembers = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  box.innerHTML = `
+    <p class="mini-label">회원 (${allMembers.length}명)</p>
+    <input id="memberSearch" placeholder="이름·연락처 검색" oninput="filterMembers()" style="margin-bottom:12px">
+    <div id="memberList"></div>`;
+  drawMembers(allMembers);
+}
+window.filterMembers = () => {
+  const q = $("memberSearch").value.trim().toLowerCase();
+  const filtered = !q ? allMembers : allMembers.filter(m =>
+    (m.name || "").toLowerCase().includes(q) || (m.phone || "").includes(q));
+  drawMembers(filtered);
+};
+function drawMembers(list) {
+  const box = $("memberList");
+  if (!list.length) { box.innerHTML = `<p class="hint">회원이 없습니다.</p>`; return; }
+  let html = "";
+  list.forEach(m => {
+    const noShow = m.penalty?.noShowCount || 0;
+    const roleBadge = m.role === "admin" ? '<span class="att-badge ok">관리자</span>'
+      : m.role === "pro" ? '<span class="att-badge ok">프로</span>' : '';
+    html += `<div class="bk-card">
+      <div class="bk-top"><div><b>${esc(m.name || "회원")}</b> ${roleBadge}</div>
+        ${noShow > 0 ? `<span class="att-badge no">노쇼 ${noShow}</span>` : ""}</div>
+      <div class="sub">${esc(m.phone || "연락처 없음")} · ${esc(m.email || "")}</div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="mini-btn" onclick="issuePassFor('${m.id}','${esc(m.name||"회원")}')">🎫 수강권 발급</button>
+        ${noShow > 0 ? `<button class="mini-btn" onclick="resetNoShow('${m.id}')">노쇼 초기화</button>` : ""}
+      </div>
+    </div>`;
+  });
+  box.innerHTML = html;
+}
+// 특정 회원에게 수강권 발급
+window.issuePassFor = async (memberId, memberName) => {
+  const lessonName = prompt("수강권 이름? (예: 개인30분 10회권)") || "수강권";
+  const total = parseInt(prompt("총 횟수?") || "10", 10);
+  const expireAt = prompt("만료일? (YYYY-MM-DD, 없으면 비워두기)") || "";
+  try {
+    await addDoc(collection(db, "passes"),
+      { memberId, memberName, lessonName, total, remaining: total, expireAt, status: "active", createdAt: serverTimestamp() });
+    alert(`${memberName}님에게 ${lessonName}(${total}회) 발급 완료`);
+  } catch (e) { alert("발급 실패: " + e.message); }
+};
+// 노쇼 카운트 초기화
+window.resetNoShow = async (memberId) => {
+  if (!confirm("이 회원의 노쇼 기록을 초기화할까요?")) return;
+  try {
+    await updateDoc(doc(db, "users", memberId), { "penalty.noShowCount": 0 });
+    renderAdminMembers();
+  } catch (e) { alert("초기화 실패: " + e.message); }
+};
+
 window.issuePass = async () => {
   const phone = prompt("발급 대상 회원의 연락처? (정확히 일치해야 함)"); if (!phone) return;
   const us = await getDocs(query(collection(db, "users"), where("phone", "==", phone)));
