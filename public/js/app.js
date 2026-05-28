@@ -381,16 +381,16 @@ window.cancelBooking = async (bookingId, slotId) => {
   try {
     await runTransaction(db, async (tx) => {
       const bRef = doc(db, "bookings", bookingId);
+      const sRef = slotId ? doc(db, "slots", slotId) : null;
+      // 1) 모든 읽기 먼저
       const bSnap = await tx.get(bRef);
+      const sSnap = sRef ? await tx.get(sRef) : null;
       if (!bSnap.exists() || bSnap.data().status !== "confirmed")
         throw new Error("이미 취소되었거나 처리할 수 없는 예약입니다.");
+      // 2) 그다음 모든 쓰기
       tx.update(bRef, { status: "cancelled" });
-      // 슬롯 되돌리기 (있을 때만)
-      if (slotId) {
-        const sRef = doc(db, "slots", slotId);
-        const sSnap = await tx.get(sRef);
-        if (sSnap.exists()) tx.update(sRef, { status: "open", bookedBy: null });
-      }
+      if (sSnap && sSnap.exists())
+        tx.update(sRef, { status: "open", bookedBy: null });
     });
     alert("예약이 취소되었습니다.");
     window.openMyBookings();
