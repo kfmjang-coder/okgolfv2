@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OK골프 - 초기 데이터 설정</title>
+<style>
+  body{font-family:system-ui,sans-serif;background:#0a1f14;color:#eaf6ec;max-width:480px;
+    margin:0 auto;padding:24px;line-height:1.6}
+  h1{font-size:22px}
+  button{width:100%;padding:15px;border:none;border-radius:12px;background:#b6ff3c;
+    color:#08210f;font-weight:800;font-size:16px;cursor:pointer;margin:12px 0}
+  button:disabled{background:#2a4636;color:#8fb39a}
+  .log{background:#0f2b1c;border:1px solid #1f4a30;border-radius:12px;padding:14px;
+    font-size:13px;white-space:pre-wrap;margin-top:16px;min-height:60px}
+  .warn{background:#3a2f08;color:#ffe08a;padding:12px;border-radius:10px;font-size:13px}
+  a{color:#b6ff3c}
+</style>
+</head>
+<body>
+<h1>🏌️ 초기 데이터 설정</h1>
+<p class="warn">이 페이지는 테스트용 프로·레슨·슬롯을 한 번에 생성합니다. <b>로그인 후</b> 본인 계정의 role을 admin으로 바꾼 뒤 실행하세요. (방법은 README 참고)<br>운영 배포 시에는 이 파일(seed.html)을 삭제하세요.</p>
+<button id="seedBtn" onclick="seed()">테스트 데이터 생성하기</button>
+<p><a href="/">← 예약 화면으로</a></p>
+<div class="log" id="log">대기 중…</div>
+
+<script type="module">
+import { db, auth, isConfigured } from "./js/firebase-config.js";
+import { collection, doc, setDoc, addDoc, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+import { onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+
+const log = (m) => { document.getElementById("log").textContent += "\n" + m; };
+let uid = null;
+if (!isConfigured) { document.getElementById("log").textContent = "⚠️ firebase-config.js 미설정"; }
+else {
+  onAuthStateChanged(auth, u => {
+    uid = u?.uid;
+    document.getElementById("log").textContent = u ? `로그인됨: ${u.email}` : "⚠️ 먼저 / 에서 로그인하세요.";
+  });
+}
+
+window.seed = async () => {
+  if (!uid) { alert("먼저 로그인하세요."); return; }
+  const btn = document.getElementById("seedBtn");
+  btn.disabled = true; btn.textContent = "생성 중…";
+  try {
+    // 프로 3인
+    const pros = [
+      { id: "pro_kim", name: "김민준", title: "대표프로", active: true },
+      { id: "pro_lee", name: "이서연", title: "프로", active: true },
+      { id: "pro_jun", name: "박주니", title: "주니어프로", active: true },
+    ];
+    for (const p of pros) { await setDoc(doc(db, "pros", p.id), p); log("프로 생성: " + p.name); }
+
+    // 레슨 종류
+    const lessons = [
+      { id: "ls_30", name: "개인 30분", durationMin: 30, order: 1, active: true },
+      { id: "ls_60", name: "개인 1시간", durationMin: 60, order: 2, active: true },
+      { id: "ls_grp", name: "그룹 1시간", durationMin: 60, order: 3, active: true },
+      { id: "ls_try", name: "체험 30분", durationMin: 30, order: 4, active: true },
+    ];
+    for (const l of lessons) { await setDoc(doc(db, "lessonTypes", l.id), l); log("레슨 생성: " + l.name); }
+
+    // 슬롯: 오늘부터 7일, 각 프로, 10~22시 20분 단위 (랜덤 일부 booked)
+    let cnt = 0;
+    for (let day = 0; day < 7; day++) {
+      const d = new Date(); d.setDate(d.getDate() + day);
+      const date = d.toISOString().slice(0, 10);
+      for (const p of pros) {
+        for (let h = 10; h < 22; h++) {
+          for (const m of [0, 20, 40]) {
+            const time = String(h).padStart(2,"0") + ":" + String(m).padStart(2,"0");
+            const booked = Math.random() < 0.25;
+            await addDoc(collection(db, "slots"), {
+              proId: p.id, date, time, durationMin: 20,
+              status: booked ? "booked" : "open", bookedBy: null
+            });
+            cnt++;
+          }
+        }
+      }
+      log(`${date} 슬롯 생성 (누적 ${cnt})`);
+    }
+    log(`\n✅ 완료! 슬롯 ${cnt}개. 이제 / 에서 예약해보세요.`);
+    btn.textContent = "완료";
+  } catch (e) {
+    log("❌ 오류: " + e.message);
+    btn.disabled = false; btn.textContent = "다시 시도";
+  }
+};
+</script>
+</body>
+</html>

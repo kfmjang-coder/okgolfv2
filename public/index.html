@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a1f14">
+<link rel="manifest" href="/manifest.json">
+<title>OK골프 레슨 예약</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Pretendard:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a1f14; --bg2:#0f2b1c; --card:#13371f; --line:#1f4a30;
+    --accent:#b6ff3c; --accent-d:#08210f; --accent2:#5fd97a;
+    --ink:#eaf6ec; --mut:#8fb39a; --off:#2a4636;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Pretendard,system-ui,sans-serif;background:var(--bg);color:var(--ink);
+    min-height:100dvh;background-image:radial-gradient(120% 80% at 80% -10%,#1a4e2e 0,transparent 55%),
+    radial-gradient(90% 60% at -10% 110%,#0d3a22 0,transparent 50%)}
+  .config-warn{background:#3a2f08;color:#ffe08a;font-size:13px;padding:10px 16px;line-height:1.5}
+  header{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;
+    border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10;
+    background:rgba(10,31,20,.9);backdrop-filter:blur(10px)}
+  .logo{font-family:'Bebas Neue';font-size:28px;letter-spacing:1px;color:var(--accent)}
+  .logo span{color:var(--ink)}
+  .nav-user{font-size:13px;color:var(--mut)}
+  .wrap{max-width:480px;margin:0 auto;padding:20px 16px 40px}
+  .view{display:none;animation:fade .35s ease}
+  .view.active{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  h2{font-family:'Bebas Neue';font-size:32px;letter-spacing:1px;margin-bottom:4px}
+  h3{font-size:18px;margin:14px 0 8px}
+  .sub{color:var(--mut);font-size:13px}
+  .desc{color:var(--mut);font-size:14px;margin-bottom:20px}
+  .mini-label{font-size:13px;color:var(--mut);margin:18px 0 8px}
+  input,textarea,select{width:100%;padding:13px 14px;border-radius:12px;border:1px solid var(--line);
+    background:var(--bg2);color:var(--ink);font-size:15px;font-family:inherit;margin-top:6px}
+  input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent)}
+  label{font-size:13px;color:var(--mut)}
+  .btn-primary{width:100%;padding:15px;border:none;border-radius:12px;background:var(--accent);
+    color:var(--accent-d);font-weight:800;font-size:16px;cursor:pointer;margin-top:14px;transition:transform .1s}
+  .btn-primary:active{transform:scale(.98)}
+  .btn-primary:disabled{background:var(--off);color:var(--mut);cursor:not-allowed}
+  .btn-ghost{width:100%;padding:14px;border:1px solid var(--line);border-radius:12px;
+    background:transparent;color:var(--ink);font-size:15px;cursor:pointer;margin-top:10px;font-family:inherit}
+  .btn-google{background:#fff;color:#222;border:none}
+  .hide{display:none}
+  /* 카드류 */
+  .avatar{width:42px;height:42px;border-radius:50%;background:var(--accent2);color:var(--accent-d);
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0}
+  .rebook-card{background:var(--card);border:2px solid var(--accent);border-radius:16px;padding:16px}
+  .rebook-head{display:flex;gap:12px;align-items:center;margin-bottom:12px}
+  .rebook-head .sub{margin-top:2px}
+  .up-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+  .up-time{color:var(--accent);font-size:15px;font-weight:700;margin-top:4px}
+  /* STEP1 */
+  .pick-card{display:flex;gap:12px;align-items:center;width:100%;text-align:left;cursor:pointer;
+    background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:10px;
+    color:var(--ink);font-family:inherit}
+  .pick-card.on{border-color:var(--accent);background:#16401f}
+  .chip{display:inline-block;padding:11px 16px;border-radius:999px;border:1px solid var(--line);
+    background:var(--bg2);color:var(--ink);font-size:14px;cursor:pointer;margin:0 8px 8px 0;font-family:inherit}
+  .chip.on{background:var(--accent);color:var(--accent-d);border-color:var(--accent);font-weight:700}
+  /* STEP2 날짜바 */
+  .date-bar{display:flex;gap:8px;overflow-x:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
+  .date-pill{flex:0 0 auto;width:52px;padding:10px 0;border-radius:12px;border:1px solid var(--line);
+    background:var(--bg2);color:var(--ink);cursor:pointer;display:flex;flex-direction:column;
+    align-items:center;gap:2px;font-family:inherit}
+  .date-pill .dow{font-size:11px;color:var(--mut)}
+  .date-pill .dnum{font-size:17px;font-weight:700}
+  .date-pill.on{background:var(--accent);color:var(--accent-d);border-color:var(--accent)}
+  .date-pill.on .dow{color:var(--accent-d)}
+  /* 시간대 접기 */
+  .zone{border:1px solid var(--line);border-radius:14px;margin-bottom:10px;overflow:hidden}
+  .zone.dim{opacity:.5}
+  .zone-head{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;
+    cursor:pointer;font-size:15px;font-weight:500}
+  .zone-cnt{font-size:13px;color:var(--mut)}
+  .zone.expanded{border-color:var(--accent2)}
+  .zone.expanded .zone-cnt{color:var(--accent2)}
+  .zone-body{display:none;padding:0 16px 16px;grid-template-columns:repeat(3,1fr);gap:8px}
+  .zone.expanded .zone-body{display:grid}
+  .slot{padding:11px 0;border-radius:10px;border:none;font-size:14px;font-weight:500;cursor:pointer;
+    background:var(--accent2);color:var(--accent-d);font-family:inherit}
+  .slot.off{background:var(--bg2);color:var(--mut);text-decoration:line-through;cursor:not-allowed}
+  /* 확정 */
+  .cf-box{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px}
+  .cf-row{display:flex;justify-content:space-between;padding:7px 0;font-size:14px}
+  .cf-row span{color:var(--mut)}
+  .field{margin-bottom:12px}
+  /* 완료 */
+  .done-check{width:64px;height:64px;border-radius:50%;background:var(--accent);color:var(--accent-d);
+    font-size:34px;display:flex;align-items:center;justify-content:center;margin:10px auto 14px;font-weight:800}
+  .done-detail{text-align:center;margin:14px 0}
+  .done-time{color:var(--accent);font-size:18px;font-weight:700;margin-top:6px}
+  .hint{color:var(--mut);font-size:14px;padding:16px 0;text-align:center}
+  .hint.sm{padding:8px 0;font-size:13px}
+  .topbar{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .back{background:none;border:none;color:var(--mut);font-size:22px;cursor:pointer;padding:0 4px}
+  nav{position:fixed;bottom:0;left:0;right:0;display:flex;border-top:1px solid var(--line);
+    background:rgba(10,31,20,.95);backdrop-filter:blur(10px);max-width:480px;margin:0 auto}
+  nav button{flex:1;padding:13px;background:none;border:none;color:var(--mut);font-size:12px;
+    cursor:pointer;font-family:inherit}
+  nav button.on{color:var(--accent);font-weight:700}
+  .authed-only{display:none}
+  body.authed .authed-only{display:flex}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">OK<span>골프</span></div>
+  <div class="nav-user" id="navUser"></div>
+</header>
+
+<div class="wrap">
+  <!-- 로그인/가입 -->
+  <section id="authView" class="view active">
+    <h2 id="authTitle">로그인</h2>
+    <p class="desc">레슨 예약을 위해 로그인하세요.</p>
+    <div id="signupFields" class="hide">
+      <div class="field"><label>이름</label><input id="suName" placeholder="홍길동"></div>
+      <div class="field"><label>연락처</label><input id="suPhone" placeholder="010-0000-0000"></div>
+    </div>
+    <div class="field"><label>이메일</label><input id="email" type="email" placeholder="you@email.com"></div>
+    <div class="field"><label>비밀번호</label><input id="password" type="password" placeholder="6자 이상"></div>
+    <button class="btn-primary" onclick="if($('signupFields').classList.contains('hide'))login();else signup()">계속</button>
+    <button class="btn-ghost btn-google" onclick="googleLogin()">Google로 계속하기</button>
+    <button class="btn-ghost" onclick="toggleAuth()">로그인 / 회원가입 전환</button>
+  </section>
+
+  <!-- 홈 -->
+  <section id="homeView" class="view">
+    <h2>예약</h2>
+    <div id="upcomingBox"></div>
+    <div id="rebookBox"></div>
+    <button class="btn-ghost" onclick="startNewBooking()" style="margin-top:16px">+ 다른 프로·시간으로 예약</button>
+  </section>
+
+  <!-- STEP1: 프로+레슨 -->
+  <section id="step1View" class="view">
+    <div class="topbar"><button class="back" onclick="show('homeView')">‹</button><h3 style="margin:0">프로와 레슨 선택</h3></div>
+    <p class="mini-label">프로</p>
+    <div id="proPick"></div>
+    <p class="mini-label">레슨 종류</p>
+    <div id="lessonPick"></div>
+    <button id="toStep2" class="btn-primary" onclick="openStep2()" disabled>다음</button>
+  </section>
+
+  <!-- STEP2: 날짜+슬롯접기 -->
+  <section id="step2View" class="view">
+    <div class="topbar"><button class="back" onclick="show('step1View')">‹</button><h3 style="margin:0">시간 선택</h3></div>
+    <p class="sub" id="s2Pro" style="margin-bottom:10px"></p>
+    <div class="date-bar" id="dateBar"></div>
+    <div id="slotZones" style="margin-top:12px"></div>
+  </section>
+
+  <!-- 확정 -->
+  <section id="confirmView" class="view">
+    <div class="topbar"><button class="back" onclick="show('step2View')">‹</button><h3 style="margin:0">예약 확인</h3></div>
+    <div class="cf-box" id="cfSummary"></div>
+    <div class="field"><label>이름</label><input id="cfName"></div>
+    <div class="field"><label>연락처</label><input id="cfPhone"></div>
+    <div class="field"><label>인원</label>
+      <select id="cfPeople"><option value="1">1명</option><option value="2">2명</option><option value="3">3명</option></select></div>
+    <div class="field"><label>요청사항(선택)</label><textarea id="cfRequest" rows="2"></textarea></div>
+    <button id="cfBtn" class="btn-primary" onclick="confirmBooking()">예약 확정</button>
+  </section>
+
+  <!-- 완료 = 예약확인 통합 -->
+  <section id="doneView" class="view">
+    <div class="cf-box" id="doneCard" style="text-align:center"></div>
+    <a id="calBtn" class="btn-ghost" style="display:block;text-align:center;text-decoration:none;line-height:1.4" target="_blank">📅 캘린더에 추가</a>
+    <button class="btn-primary" onclick="show('homeView');renderHomeSafe()">홈으로</button>
+  </section>
+</div>
+
+<nav class="authed-only">
+  <button class="on" onclick="show('homeView');renderHomeSafe()">예약</button>
+  <button onclick="logout()">로그아웃</button>
+</nav>
+
+<script type="module" src="/js/app.js"></script>
+<script>
+  // 로그인 상태에 따라 하단 탭 노출
+  const origShow = null;
+  window.renderHomeSafe = () => { try { if (window.renderHome) window.renderHome(); } catch(e){} };
+  const mo = new MutationObserver(() => {
+    const authed = document.getElementById('homeView').classList.contains('active') ||
+                   document.getElementById('step1View').classList.contains('active') ||
+                   !document.getElementById('authView').classList.contains('active');
+    document.body.classList.toggle('authed', authed && !document.getElementById('authView').classList.contains('active'));
+  });
+  document.querySelectorAll('.view').forEach(v => mo.observe(v, { attributes:true, attributeFilter:['class'] }));
+</script>
+<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}</script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function myRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.auth.uid == uid;
+    }
+    match /pros/{id} {
+      allow read: if signedIn();
+      allow write: if signedIn() && myRole() == "admin";
+    }
+    match /lessonTypes/{id} {
+      allow read: if signedIn();
+      allow write: if signedIn() && myRole() == "admin";
+    }
+    match /slots/{id} {
+      allow read: if signedIn();
+      // open -> booked, 본인이 예약자로 들어갈 때만
+      allow update: if signedIn()
+        && resource.data.status == "open"
+        && request.resource.data.status == "booked"
+        && request.resource.data.bookedBy == request.auth.uid;
+      allow create, delete: if signedIn() && myRole() == "admin";
+    }
+    match /bookings/{id} {
+      allow read: if signedIn() && resource.data.memberId == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.memberId == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.memberId == request.auth.uid;
+    }
+  }
+}
