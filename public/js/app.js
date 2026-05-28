@@ -35,8 +35,25 @@ if (!isConfigured) {
   });
 }
 
+// ---------- 매장 이름 (관리자가 편집) ----------
+let storeName = "OK골프";
+async function loadStoreName() {
+  try {
+    const snap = await getDoc(doc(db, "settings", "store"));
+    if (snap.exists() && snap.data().name) storeName = snap.data().name;
+  } catch {}
+  applyStoreName();
+}
+function applyStoreName() {
+  const a = $("storeLogo"), b = $("storeLogoLoading");
+  if (a) a.textContent = storeName;
+  if (b) b.textContent = storeName;
+  document.title = storeName + " 레슨 예약";
+}
+
 // ---------- 인증 ----------
 if (isConfigured) {
+  loadStoreName();
   onAuthStateChanged(auth, async (user) => {
     me = user;
     if (user) {
@@ -811,7 +828,15 @@ async function renderAdminManage() {
     getDocs(collection(db, "pros")),
     getDocs(collection(db, "lessonTypes"))
   ]);
-  let html = `<p class="mini-label">프로</p>`;
+  let html = `<p class="mini-label">매장 이름</p>
+    <div class="bk-card">
+      <div style="display:flex;gap:8px">
+        <input id="storeNameInput" value="${esc(storeName)}" placeholder="매장 이름" style="flex:1;margin-top:0">
+        <button class="mini-btn" onclick="saveStoreName()" style="white-space:nowrap">저장</button>
+      </div>
+      <div class="sub" style="margin-top:8px">화면 상단에 표시되는 이름입니다.</div>
+    </div>
+    <p class="mini-label" style="margin-top:20px">프로</p>`;
   ps.docs.forEach(d => {
     const p = d.data();
     const wh = p.workHours || { start: "10:00", end: "22:00" };
@@ -837,6 +862,16 @@ async function renderAdminManage() {
 }
 window.toggleProActive = async (id, cur) => {
   await updateDoc(doc(db, "pros", id), { active: !cur }); renderAdminManage();
+};
+// 매장 이름 저장
+window.saveStoreName = async () => {
+  const name = $("storeNameInput").value.trim();
+  if (!name) { alert("매장 이름을 입력하세요."); return; }
+  try {
+    await setDoc(doc(db, "settings", "store"), { name }, { merge: true });
+    storeName = name; applyStoreName();
+    alert("매장 이름이 저장되었습니다.");
+  } catch (e) { alert("저장 실패: " + e.message); }
 };
 window.addPro = async () => {
   const name = prompt("프로 이름?"); if (!name) return;
