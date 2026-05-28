@@ -216,8 +216,13 @@ window.startNewBooking = async () => {
     const p = d.data();
     const el = document.createElement("button");
     el.className = "pick-card";
-    el.innerHTML = `<div class="avatar">${p.name.slice(0,2)}</div>
-      <div><b>${p.name}</b><div class="sub">${p.title || "프로"}</div></div>`;
+    const photo = p.photoURL
+      ? `<img src="${p.photoURL}" class="pro-thumb">`
+      : `<div class="avatar">${(p.name||"").slice(0,2)}</div>`;
+    el.innerHTML = `${photo}
+      <div style="flex:1;text-align:left"><b>${esc(p.name)}</b>
+        <div class="sub">${esc(p.title || "프로")}</div>
+        ${p.bio ? `<div class="sub" style="margin-top:2px">${esc(p.bio)}</div>` : ""}</div>`;
     el.onclick = () => { draft.proId = d.id; draft.proName = p.name; draftWorkHours = p.workHours || null; pickPro(el); loadLessonTypes(); };
     pe.appendChild(el);
   });
@@ -234,7 +239,14 @@ window.toggleRecurOptions = () => {
   const on = $("recurOn").checked;
   $("recurOptions").classList.toggle("hide", !on);
   $("toStep2").textContent = on ? "반복예약 등록" : "다음";
-  if (on) fillRecurTimeOptions();
+  if (on) {
+    fillRecurTimeOptions();
+    // 반복 모드: 프로·레슨이 선택돼 있으면 버튼 활성화 (날짜 불필요)
+    if (draft.proId && draft.lessonTypeId) $("toStep2").disabled = false;
+  } else {
+    // 1회 모드로 돌아오면 레슨 선택 여부에 따라
+    $("toStep2").disabled = !(draft.proId && draft.lessonTypeId);
+  }
 };
 
 // 선택한 프로의 운영시간 범위로 20분 단위 시간 옵션 채우기
@@ -253,6 +265,9 @@ function fillRecurTimeOptions() {
 // "다음" 버튼: 반복이면 등록, 아니면 날짜선택으로
 window.step1Next = () => {
   if ($("recurOn").checked) {
+    if (!draft.proId || !draft.lessonTypeId) {
+      return alert("프로와 레슨을 먼저 선택해주세요.");
+    }
     // 시간 옵션이 비어있으면 채우고 막음
     if (!$("rcTime").value) {
       fillRecurTimeOptions();
@@ -1070,12 +1085,18 @@ async function renderAdminManage() {
   ps.docs.forEach(d => {
     const p = d.data();
     const wh = p.workHours || { start: "10:00", end: "22:00" };
-    html += `<div class="bk-card"><div class="bk-top">
-      <div><b>${p.name}</b> · ${p.title || ""}</div>
-      <button class="mini-btn" onclick="toggleProActive('${d.id}',${p.active})">${p.active ? "비활성" : "활성"}</button>
-    </div>
-    <div class="sub">${p.active ? "활성" : "비활성"} · 운영 ${wh.start}~${wh.end}</div>
-    <button class="mini-btn" onclick="setWorkHours('${d.id}','${wh.start}','${wh.end}')" style="margin-top:8px">⏰ 운영시간 설정</button>
+    const photo = p.photoURL
+      ? `<img src="${p.photoURL}" class="pro-thumb">`
+      : `<div class="avatar">${(p.name||"").slice(0,2)}</div>`;
+    html += `<div class="bk-card pro-card" onclick="openProEdit('${d.id}')">
+      <div style="display:flex;gap:12px;align-items:center">
+        ${photo}
+        <div style="flex:1">
+          <b>${esc(p.name)}</b> · <span class="sub">${esc(p.title || "프로")}</span>
+          <div class="sub" style="margin-top:2px">${p.active ? "🟢 활성" : "⚪ 비활성"} · 운영 ${wh.start}~${wh.end}</div>
+        </div>
+        <span class="chev">›</span>
+      </div>
     </div>`;
   });
   html += `<button class="btn-ghost" onclick="addPro()" style="margin-top:6px">+ 프로 추가</button>`;
@@ -1097,6 +1118,65 @@ async function renderAdminManage() {
 window.toggleProActive = async (id, cur) => {
   await updateDoc(doc(db, "pros", id), { active: !cur }); renderAdminManage();
 };
+
+// ---------- 프로 편집 ----------
+let editingProId = null;
+function hourSelectOptions(selected) {
+  let o = "";
+  for (let h = 0; h <= 24; h++) {
+    const v = String(h).padStart(2,"0")+":00";
+    o += `<option value="${v}" ${v===selected?"selected":""}>${h}:00</option>`;
+  }
+  return o;
+}
+window.openProEdit = async (id) => {
+  editingProId = id;
+  show("proEditView");
+  const snap = await getDoc(doc(db, "pros", id));
+  const p = snap.exists() ? snap.data() : {};
+  const wh = p.workHours || { start: "10:00", end: "22:00" };
+  $("pedPhoto").value = p.photoURL || "";
+  $("pedName").value = p.name || "";
+  $("pedTitle").value = p.title || "";
+  $("pedBio").value = p.bio || "";
+  $("pedCareer").value = (p.career || []).join("\n");
+  $("pedStart").innerHTML = hourSelectOptions(wh.start);
+  $("pedEnd").innerHTML = hourSelectOptions(wh.end);
+  $("pedActive").checked = p.active !== false;
+  proEditPhotoPreview();
+};
+window.proEditPhotoPreview = () => {
+  const url = $("pedPhoto").value.trim();
+  $("proEditPhoto").innerHTML = url
+    ? `<img src="${url}" class="pro-photo-lg" onerror="this.style.display='none'">`
+    : `<div class="avatar lg">${($("pedName").value||"").slice(0,2)}</div>`;
+};
+window.saveProEdit = async () => {
+  const name = $("pedName").value.trim();
+  if (!name) { alert("이름을 입력하세요."); return; }
+  const start = $("pedStart").value, end = $("pedEnd").value;
+  if (start >= end) { alert("운영 시작 시각이 종료보다 빨라야 합니다."); return; }
+  const data = {
+    name, title: $("pedTitle").value.trim(), bio: $("pedBio").value.trim(),
+    career: $("pedCareer").value.split("\n").map(s => s.trim()).filter(Boolean),
+    photoURL: $("pedPhoto").value.trim(),
+    workHours: { start, end },
+    active: $("pedActive").checked
+  };
+  try {
+    await updateDoc(doc(db, "pros", editingProId), data);
+    alert("저장되었습니다.");
+    adminTab("manage");
+  } catch (e) { alert("저장 실패: " + e.message); }
+};
+window.deletePro = async () => {
+  if (!confirm("이 프로를 삭제할까요?\n(이미 잡힌 예약·슬롯은 남습니다. 비활성을 권장)")) return;
+  try {
+    await deleteDoc(doc(db, "pros", editingProId));
+    alert("삭제되었습니다.");
+    adminTab("manage");
+  } catch (e) { alert("삭제 실패: " + e.message); }
+};
 // 매장 설정 저장 (이름·범위·마감·노쇼)
 window.saveStoreSettings = async () => {
   const name = $("storeNameInput").value.trim();
@@ -1113,24 +1193,13 @@ window.saveStoreSettings = async () => {
   } catch (e) { alert("저장 실패: " + e.message); }
 };
 window.addPro = async () => {
-  const name = prompt("프로 이름?"); if (!name) return;
-  const title = prompt("직함? (예: 대표프로)") || "프로";
-  try { await addDoc(collection(db, "pros"),
-    { name, title, active: true, workHours: { start: "10:00", end: "22:00" } });
-    renderAdminManage(); }
-  catch (e) { alert("추가 실패: " + e.message); }
-};
-// 운영시간 설정 (정시 단위, 예: 10 / 22)
-window.setWorkHours = async (id, curStart, curEnd) => {
-  const s = prompt(`운영 시작 시각 (정시, 0~23)\n예: 9 → 09:00`, parseInt(curStart,10));
-  if (s === null) return;
-  const e = prompt(`운영 종료 시각 (정시, 1~24)\n예: 22 → 22:00`, parseInt(curEnd,10));
-  if (e === null) return;
-  const sh = parseInt(s,10), eh = parseInt(e,10);
-  if (isNaN(sh) || isNaN(eh) || sh < 0 || eh > 24 || sh >= eh) { alert("시작<종료, 0~24 범위로 입력하세요."); return; }
-  const start = String(sh).padStart(2,"0")+":00", end = String(eh).padStart(2,"0")+":00";
-  try { await updateDoc(doc(db, "pros", id), { workHours: { start, end } }); renderAdminManage(); }
-  catch (err) { alert("설정 실패: " + err.message); }
+  const name = prompt("새 프로 이름?"); if (!name || !name.trim()) return;
+  try {
+    const ref = await addDoc(collection(db, "pros"),
+      { name: name.trim(), title: "프로", bio: "", career: [], photoURL: "",
+        active: true, workHours: { start: "10:00", end: "22:00" } });
+    openProEdit(ref.id);  // 바로 편집 화면으로 → 나머지 정보 입력
+  } catch (e) { alert("추가 실패: " + e.message); }
 };
 window.addLesson = async () => {
   const name = prompt("레슨 이름? (예: 개인 30분)"); if (!name) return;
@@ -1439,22 +1508,62 @@ function drawMembers(list) {
         ${noShow > 0 ? `<span class="att-badge no">노쇼 ${noShow}</span>` : ""}</div>
       <div class="sub">${esc(m.phone || "연락처 없음")} · ${esc(m.email || "")}</div>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-        <button class="mini-btn" onclick="issuePassFor('${m.id}','${esc(m.name||"회원")}')">🎫 수강권 발급</button>
+        <button class="mini-btn" onclick="issuePassFor('${m.id}','${esc(m.name||"회원")}')">🎫 발급</button>
+        <button class="mini-btn" onclick="toggleMemberPasses('${m.id}')">📋 수강권 보기</button>
         ${noShow > 0 ? `<button class="mini-btn" onclick="resetNoShow('${m.id}')">노쇼 초기화</button>` : ""}
       </div>
+      <div class="member-passes hide" id="mp-${m.id}"></div>
     </div>`;
   });
   box.innerHTML = html;
 }
+// 회원 수강권 목록 펼치기/접기
+window.toggleMemberPasses = async (memberId) => {
+  const area = $(`mp-${memberId}`);
+  if (!area.classList.contains("hide")) { area.classList.add("hide"); return; }
+  area.classList.remove("hide");
+  area.innerHTML = `<p class="sub" style="margin-top:10px">불러오는 중…</p>`;
+  const snap = await getDocs(query(collection(db, "passes"), where("memberId", "==", memberId)));
+  if (snap.empty) { area.innerHTML = `<p class="sub" style="margin-top:10px">발급된 수강권이 없습니다.</p>`; return; }
+  let html = `<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">`;
+  snap.docs.forEach(d => {
+    const p = d.data();
+    html += `<div class="pass-row">
+      <div><b>${esc(p.lessonName)}</b> · 잔여 ${p.remaining ?? p.total}/${p.total}회${p.expireAt?` · ~${p.expireAt}`:""}</div>
+      <button class="mini-btn danger" onclick="deletePass('${d.id}','${memberId}')">삭제</button>
+    </div>`;
+  });
+  html += `</div>`;
+  area.innerHTML = html;
+};
+// 수강권 삭제
+window.deletePass = async (passId, memberId) => {
+  if (!confirm("이 수강권을 삭제할까요? 되돌릴 수 없습니다.")) return;
+  try {
+    await deleteDoc(doc(db, "passes", passId));
+    // 목록 갱신: 닫았다 다시 열기
+    $(`mp-${memberId}`).classList.add("hide");
+    toggleMemberPasses(memberId);
+  } catch (e) { alert("삭제 실패: " + e.message); }
+};
 // 특정 회원에게 수강권 발급
 window.issuePassFor = async (memberId, memberName) => {
-  const lessonName = prompt("수강권 이름? (예: 개인30분 10회권)") || "수강권";
-  const total = parseInt(prompt("총 횟수?") || "10", 10);
-  const expireAt = prompt("만료일? (YYYY-MM-DD, 없으면 비워두기)") || "";
+  const lessonName = prompt("수강권 이름? (예: 개인30분 10회권)", "개인30분 10회권");
+  if (lessonName === null) return;                 // 취소
+  if (!lessonName.trim()) { alert("수강권 이름을 입력하세요."); return; }
+  const totalStr = prompt("총 횟수?", "10");
+  if (totalStr === null) return;                   // 취소
+  const total = parseInt(totalStr, 10);
+  if (isNaN(total) || total < 1) { alert("총 횟수를 올바르게 입력하세요."); return; }
+  const expireAt = prompt("만료일? (YYYY-MM-DD, 없으면 비워두기)", "");
+  if (expireAt === null) return;                   // 취소
+  if (!confirm(`${memberName}님에게\n${lessonName.trim()} (${total}회)${expireAt?`\n만료 ${expireAt}`:""}\n\n발급할까요?`)) return;
   try {
     await addDoc(collection(db, "passes"),
-      { memberId, memberName, lessonName, total, remaining: total, expireAt, status: "active", createdAt: serverTimestamp() });
-    alert(`${memberName}님에게 ${lessonName}(${total}회) 발급 완료`);
+      { memberId, memberName, lessonName: lessonName.trim(), total, remaining: total,
+        expireAt: expireAt.trim(), status: "active", createdAt: serverTimestamp() });
+    alert(`${memberName}님에게 ${lessonName.trim()}(${total}회) 발급 완료`);
+    renderAdminMembers();
   } catch (e) { alert("발급 실패: " + e.message); }
 };
 // 노쇼 카운트 초기화

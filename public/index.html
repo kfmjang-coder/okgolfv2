@@ -191,6 +191,14 @@
   .cal-legend{display:flex;gap:16px;justify-content:center;margin-top:12px;font-size:12px;color:var(--mut)}
   .cal-legend span{display:flex;align-items:center;gap:5px}
   .bk-card.flash{animation:flashHl 1.5s ease}
+  .pass-row{display:flex;justify-content:space-between;align-items:center;gap:8px;
+    padding:8px 0;font-size:14px;border-bottom:1px solid var(--line)}
+  .pass-row:last-child{border-bottom:none}
+  .pro-thumb{width:48px;height:48px;border-radius:50%;object-fit:cover;flex:0 0 auto}
+  .pro-photo-lg{width:96px;height:96px;border-radius:50%;object-fit:cover;border:2px solid var(--accent)}
+  .avatar.lg{width:96px;height:96px;border-radius:50%;font-size:32px;display:inline-flex;align-items:center;justify-content:center}
+  .pro-card{cursor:pointer}
+  .pro-card .chev{color:var(--mut);font-size:22px}
   @keyframes flashHl{0%,100%{box-shadow:0 0 0 0 transparent}30%{box-shadow:0 0 0 3px var(--accent)}}
   .att-badge{font-size:11px;padding:2px 8px;border-radius:999px;margin-left:6px}
   .att-badge.ok{background:#16401f;color:var(--accent)}
@@ -315,6 +323,25 @@
     </div>
     <div id="myCalBox" class="hide" style="margin-top:14px"></div>
     <div id="myList" style="margin-top:14px"></div>
+  </section>
+
+  <!-- 프로 편집 -->
+  <section id="proEditView" class="view">
+    <div class="topbar"><button class="back" onclick="adminTab('manage')">‹</button><h3 style="margin:0">프로 편집</h3></div>
+    <div id="proEditPhoto" style="text-align:center;margin:10px 0"></div>
+    <div class="field"><label>사진 URL (선택)</label>
+      <input id="pedPhoto" placeholder="https://... 이미지 주소" oninput="proEditPhotoPreview()"></div>
+    <div class="field"><label>이름</label><input id="pedName" placeholder="홍길동"></div>
+    <div class="field"><label>직함</label><input id="pedTitle" placeholder="예: 대표프로, KPGA 프로"></div>
+    <div class="field"><label>소개</label><textarea id="pedBio" rows="3" placeholder="간단한 자기소개"></textarea></div>
+    <div class="field"><label>수상·경력 (한 줄에 하나씩)</label><textarea id="pedCareer" rows="4" placeholder="2020 KPGA 투어 우승&#10;前 OO컨트리클럽 소속"></textarea></div>
+    <div class="field"><label>운영 시간</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="pedStart" style="flex:1"></select><span>~</span><select id="pedEnd" style="flex:1"></select>
+      </div></div>
+    <label style="display:flex;align-items:center;gap:8px;margin:10px 0"><input type="checkbox" id="pedActive" style="width:auto;margin:0"> 활성 (회원에게 노출)</label>
+    <button class="btn-primary" onclick="saveProEdit()">저장</button>
+    <button class="btn-ghost danger" onclick="deletePro()" style="margin-top:10px">이 프로 삭제</button>
   </section>
 
   <!-- 관리자 콘솔 -->
