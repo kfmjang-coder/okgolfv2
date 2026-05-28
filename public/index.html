@@ -105,6 +105,15 @@
   nav button.on{color:var(--accent);font-weight:700}
   .authed-only{display:none}
   body.authed .authed-only{display:flex}
+  /* 내 예약 카드 */
+  .bk-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:10px}
+  .bk-card.dim{opacity:.5}
+  .bk-top{display:flex;justify-content:space-between;align-items:center;font-size:15px}
+  .bk-badge{font-size:12px;color:var(--mut);background:var(--bg2);padding:3px 10px;border-radius:999px}
+  .bk-time{color:var(--accent);font-size:14px;font-weight:700;margin-top:6px}
+  .cancel-btn{margin-top:12px;width:100%;padding:11px;border:1px solid #6b2b2b;border-radius:10px;
+    background:transparent;color:#ff9b9b;font-size:14px;cursor:pointer;font-family:inherit}
+  .cancel-btn:active{background:#3a1a1a}
 </style>
 </head>
 <body>
@@ -173,10 +182,17 @@
     <a id="calBtn" class="btn-ghost" style="display:block;text-align:center;text-decoration:none;line-height:1.4" target="_blank">📅 캘린더에 추가</a>
     <button class="btn-primary" onclick="show('homeView');renderHomeSafe()">홈으로</button>
   </section>
+
+  <!-- 내 예약 목록 -->
+  <section id="myView" class="view">
+    <h2>내 예약</h2>
+    <div id="myList" style="margin-top:14px"></div>
+  </section>
 </div>
 
 <nav class="authed-only">
-  <button class="on" onclick="show('homeView');renderHomeSafe()">예약</button>
+  <button class="on" onclick="show('homeView');renderHomeSafe();setTab(this)">예약</button>
+  <button onclick="openMyBookings();setTab(this)">내 예약</button>
   <button onclick="logout()">로그아웃</button>
 </nav>
 
@@ -185,6 +201,10 @@
   // 로그인 상태에 따라 하단 탭 노출
   const origShow = null;
   window.renderHomeSafe = () => { try { if (window.renderHome) window.renderHome(); } catch(e){} };
+  window.setTab = (el) => {
+    document.querySelectorAll('nav button').forEach(b => b.classList.remove('on'));
+    el.classList.add('on');
+  };
   const mo = new MutationObserver(() => {
     const authed = document.getElementById('homeView').classList.contains('active') ||
                    document.getElementById('step1View').classList.contains('active') ||

@@ -320,3 +320,79 @@ function showDone() {
   const btn = $("cfBtn"); btn.disabled = false; btn.textContent = "예약 확정";
   $("cfRequest").value = "";
 }
+
+// ============================================================
+// [2번] 마이 예약 목록 + 예약 취소
+// ============================================================
+window.openMyBookings = async () => {
+  show("myView");
+  const box = $("myList");
+  box.innerHTML = `<p class="hint">불러오는 중…</p>`;
+  try {
+    const snap = await getDocs(query(collection(db, "bookings"),
+      where("memberId", "==", me.uid)));
+    const all = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+
+    const today = new Date().toISOString().slice(0, 10);
+    const upcoming = all.filter(b => b.status === "confirmed" && b.date >= today);
+    const past = all.filter(b => !(b.status === "confirmed" && b.date >= today))
+      .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
+
+    if (all.length === 0) {
+      box.innerHTML = `<p class="hint">아직 예약 내역이 없어요.</p>`;
+      return;
+    }
+    let html = "";
+    if (upcoming.length) {
+      html += `<p class="mini-label">다가오는 예약</p>`;
+      upcoming.forEach(b => { html += bookingCard(b, true); });
+    }
+    if (past.length) {
+      html += `<p class="mini-label" style="margin-top:20px">지난 예약</p>`;
+      past.forEach(b => { html += bookingCard(b, false); });
+    }
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = `<p class="hint">목록을 불러오지 못했어요.</p>`;
+  }
+};
+
+function bookingCard(b, cancelable) {
+  const statusLabel = b.status === "cancelled" ? "취소됨"
+    : (b.date < new Date().toISOString().slice(0,10) ? "완료" : "예약됨");
+  const btn = cancelable
+    ? `<button class="cancel-btn" onclick="cancelBooking('${b.id}','${b.slotId}')">예약 취소</button>`
+    : "";
+  return `<div class="bk-card ${b.status === 'cancelled' ? 'dim' : ''}">
+      <div class="bk-top">
+        <div><b>${b.proName}</b> · ${b.lessonName}</div>
+        <span class="bk-badge">${statusLabel}</span>
+      </div>
+      <div class="bk-time">${fmtDate(b.date)} ${b.time} · ${b.people || 1}명</div>
+      ${btn}
+    </div>`;
+}
+
+// 취소: 예약을 cancelled로 + 슬롯을 다시 open으로 (트랜잭션)
+window.cancelBooking = async (bookingId, slotId) => {
+  if (!confirm("이 예약을 취소할까요? 취소하면 해당 시간이 다시 열립니다.")) return;
+  try {
+    await runTransaction(db, async (tx) => {
+      const bRef = doc(db, "bookings", bookingId);
+      const bSnap = await tx.get(bRef);
+      if (!bSnap.exists() || bSnap.data().status !== "confirmed")
+        throw new Error("이미 취소되었거나 처리할 수 없는 예약입니다.");
+      tx.update(bRef, { status: "cancelled" });
+      // 슬롯 되돌리기 (있을 때만)
+      if (slotId) {
+        const sRef = doc(db, "slots", slotId);
+        const sSnap = await tx.get(sRef);
+        if (sSnap.exists()) tx.update(sRef, { status: "open", bookedBy: null });
+      }
+    });
+    alert("예약이 취소되었습니다.");
+    window.openMyBookings();
+  } catch (e) { alert(e.message); }
+};
