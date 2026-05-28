@@ -100,9 +100,17 @@
   .back{background:none;border:none;color:var(--mut);font-size:22px;cursor:pointer;padding:0 4px}
   nav{position:fixed;bottom:0;left:0;right:0;display:flex;border-top:1px solid var(--line);
     background:rgba(10,31,20,.95);backdrop-filter:blur(10px);max-width:480px;margin:0 auto}
-  nav button{flex:1;padding:13px;background:none;border:none;color:var(--mut);font-size:12px;
-    cursor:pointer;font-family:inherit}
+  nav button{flex:1;padding:11px 2px;background:none;border:none;color:var(--mut);font-size:11px;
+    cursor:pointer;font-family:inherit;white-space:nowrap}
   nav button.on{color:var(--accent);font-weight:700}
+  /* 게시판 */
+  .post-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:10px}
+  .post-card.pinned{border-color:var(--accent);background:#16401f}
+  .post-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .post-cat{font-size:12px;color:var(--accent2);background:var(--bg2);padding:3px 10px;border-radius:999px}
+  .post-title{font-size:16px;font-weight:700;margin-bottom:6px}
+  .post-body{font-size:14px;color:#cfe6d4;white-space:pre-wrap;line-height:1.5}
+  .post-meta{font-size:12px;color:var(--mut);margin-top:10px}
   .authed-only{display:none}
   body.authed .authed-only{display:flex}
   /* 내 예약 카드 */
@@ -215,13 +223,65 @@
     </div>
     <div id="adminBody" style="margin-top:14px"></div>
     <button class="btn-ghost" id="dayOpenBtn" onclick="openWholeDay()" style="margin-top:8px;display:none">⚡ 이 날짜 10~22시 전체 열기</button>
+    <button class="btn-ghost admin-only" onclick="issuePass()" style="margin-top:8px">🎫 수강권 발급</button>
+  </section>
+
+  <!-- 게시판 -->
+  <section id="boardView" class="view">
+    <h2>게시판</h2>
+    <div id="boardFilter" class="admin-tabs" style="flex-wrap:wrap">
+      <button class="on" data-cat="all" onclick="setBoardFilter('all')">전체</button>
+      <button data-cat="notice" onclick="setBoardFilter('notice')">공지</button>
+      <button data-cat="free" onclick="setBoardFilter('free')">자유</button>
+      <button data-cat="swing" onclick="setBoardFilter('swing')">질문</button>
+    </div>
+    <button class="btn-ghost" onclick="openPostWrite()" style="margin-top:10px">✏️ 글쓰기</button>
+    <div id="postList" style="margin-top:14px"></div>
+  </section>
+
+  <!-- 글쓰기 -->
+  <section id="postWriteView" class="view">
+    <div class="topbar"><button class="back" onclick="openBoard()">‹</button><h3 style="margin:0">글쓰기</h3></div>
+    <div class="field"><label>카테고리</label>
+      <select id="pwCategory"><option value="free">자유</option><option value="swing">질문</option><option value="notice">공지</option></select></div>
+    <div class="field"><label>제목</label><input id="pwTitle"></div>
+    <div class="field"><label>내용</label><textarea id="pwContent" rows="5"></textarea></div>
+    <label style="display:flex;align-items:center;gap:8px;margin:8px 0"><input type="checkbox" id="pwAnon" style="width:auto;margin:0"> 익명으로</label>
+    <label class="admin-only" style="display:flex;align-items:center;gap:8px;margin:8px 0"><input type="checkbox" id="pwPin" style="width:auto;margin:0"> 공지 상단 고정</label>
+    <button class="btn-primary" onclick="createPost()">등록</button>
+  </section>
+
+  <!-- 반복예약 -->
+  <section id="recurringView" class="view">
+    <h2>반복예약</h2>
+    <p class="desc">매주 같은 시간에 자동으로 예약을 잡습니다.</p>
+    <div class="field"><label>프로</label><select id="rcPro"></select></div>
+    <div class="field"><label>레슨</label><select id="rcLesson"></select></div>
+    <div class="field"><label>요일</label>
+      <select id="rcWeekday"><option value="1">월</option><option value="2">화</option><option value="3">수</option><option value="4">목</option><option value="5">금</option><option value="6">토</option><option value="0">일</option></select></div>
+    <div class="field"><label>시간 (예: 19:00)</label><input id="rcTime" type="time" step="1200"></div>
+    <div class="field"><label>반복</label>
+      <select id="rcEvery"><option value="1">매주</option><option value="2">격주</option></select></div>
+    <div class="field"><label>기간 (주)</label>
+      <select id="rcWeeks"><option value="4">4주</option><option value="8">8주</option><option value="12">12주</option></select></div>
+    <button class="btn-primary" onclick="registerRecurring()">반복예약 등록</button>
+    <div id="rcList" style="margin-top:20px"></div>
+  </section>
+
+  <!-- 수강권 -->
+  <section id="passView" class="view">
+    <h2>이용권</h2>
+    <div id="passList" style="margin-top:14px"></div>
   </section>
 </div>
 
 <nav class="authed-only">
   <button class="on" onclick="show('homeView');renderHomeSafe();setTab(this)">예약</button>
   <button onclick="openMyBookings();setTab(this)">내 예약</button>
-  <button class="admin-only" onclick="openAdmin();setTab(this)">관리자</button>
+  <button onclick="openRecurring();setTab(this)">반복</button>
+  <button onclick="openPasses();setTab(this)">이용권</button>
+  <button onclick="openBoard();setTab(this)">게시판</button>
+  <button class="admin-only" onclick="openAdmin();setTab(this)">관리</button>
   <button onclick="logout()">로그아웃</button>
 </nav>
 

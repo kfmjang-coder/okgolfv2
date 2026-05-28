@@ -567,3 +567,210 @@ window.deleteLesson = async (id, name) => {
   try { await deleteDoc(doc(db, "lessonTypes", id)); renderAdminManage(); }
   catch (e) { alert("삭제 실패: " + e.message); }
 };
+
+// ============================================================
+// [4-A] 게시판 — 공지/자유/질문, 작성·삭제, 댓글
+// ============================================================
+let boardCategory = "all";
+window.openBoard = () => { show("boardView"); boardCategory = "all"; setBoardFilter("all"); };
+
+window.setBoardFilter = (cat) => {
+  boardCategory = cat;
+  document.querySelectorAll("#boardFilter button").forEach(b =>
+    b.classList.toggle("on", b.dataset.cat === cat));
+  loadPosts();
+};
+
+async function loadPosts() {
+  const box = $("postList");
+  box.innerHTML = `<p class="hint">불러오는 중…</p>`;
+  const snap = await getDocs(collection(db, "posts"));
+  let list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+  if (boardCategory !== "all") list = list.filter(p => p.category === boardCategory);
+  // 공지 핀 먼저
+  list.sort((a, b) => (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0));
+  if (list.length === 0) { box.innerHTML = `<p class="hint">게시글이 없습니다.</p>`; return; }
+  const catLabel = { notice: "공지", free: "자유", swing: "질문" };
+  let html = "";
+  list.forEach(p => {
+    const isMine = p.authorId === me.uid;
+    const canDelete = isMine || myProfile?.role === "admin";
+    html += `<div class="post-card ${p.isPinned ? 'pinned' : ''}">
+      <div class="post-top">
+        <span class="post-cat">${p.isPinned ? "📌 " : ""}${catLabel[p.category] || ""}</span>
+        ${canDelete ? `<button class="mini-btn danger" onclick="deletePost('${p.id}')">삭제</button>` : ""}
+      </div>
+      <div class="post-title">${esc(p.title)}</div>
+      <div class="post-body">${esc(p.content)}</div>
+      <div class="post-meta">${p.isAnonymous ? "익명" : esc(p.authorName || "회원")}</div>
+    </div>`;
+  });
+  box.innerHTML = html;
+}
+
+window.openPostWrite = () => show("postWriteView");
+window.createPost = async () => {
+  const title = $("pwTitle").value.trim(), content = $("pwContent").value.trim();
+  const category = $("pwCategory").value;
+  if (!title || !content) return alert("제목과 내용을 입력하세요.");
+  const isAdminOrPro = myProfile?.role === "admin" || myProfile?.role === "pro";
+  try {
+    await addDoc(collection(db, "posts"), {
+      category, title, content,
+      authorId: me.uid, authorName: myProfile?.name || "회원",
+      isAnonymous: $("pwAnon").checked,
+      isPinned: (category === "notice" && isAdminOrPro) ? $("pwPin").checked : false,
+      createdAt: serverTimestamp()
+    });
+    $("pwTitle").value = ""; $("pwContent").value = ""; $("pwAnon").checked = false;
+    openBoard();
+  } catch (e) { alert("등록 실패: " + e.message); }
+};
+window.deletePost = async (id) => {
+  if (!confirm("이 글을 삭제할까요?")) return;
+  try { await deleteDoc(doc(db, "posts", id)); loadPosts(); }
+  catch (e) { alert("삭제 실패: " + e.message); }
+};
+const esc = (s) => (s || "").replace(/[&<>"]/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// ============================================================
+// [4-B] 반복예약 — 매주/격주 패턴 등록 → 슬롯 일괄 예약
+// ============================================================
+window.openRecurring = () => {
+  show("recurringView");
+  // 프로 옵션
+  getDocs(query(collection(db, "pros"), where("active", "==", true))).then(ps => {
+    let o = `<option value="">프로 선택</option>`;
+    ps.forEach(d => o += `<option value="${d.id}" data-name="${d.data().name}">${d.data().name}</option>`);
+    $("rcPro").innerHTML = o;
+  });
+  getDocs(query(collection(db, "lessonTypes"), where("active", "==", true))).then(ls => {
+    let o = `<option value="">레슨 선택</option>`;
+    ls.docs.sort((a,b)=>(a.data().order||0)-(b.data().order||0))
+      .forEach(d => o += `<option value="${d.id}" data-name="${d.data().name}">${d.data().name}</option>`);
+    $("rcLesson").innerHTML = o;
+  });
+  loadMyRecurring();
+};
+
+// 반복 패턴 등록: 향후 N주 동안 해당 요일·시간 슬롯을 찾아 예약
+window.registerRecurring = async () => {
+  const proSel = $("rcPro"), lessonSel = $("rcLesson");
+  const proId = proSel.value, lessonTypeId = lessonSel.value;
+  const proName = proSel.selectedOptions[0]?.dataset.name;
+  const lessonName = lessonSel.selectedOptions[0]?.dataset.name;
+  const weekday = parseInt($("rcWeekday").value, 10);   // 0=일 ~ 6=토
+  const time = $("rcTime").value;                        // "HH:MM"
+  const weeks = parseInt($("rcWeeks").value, 10);        // 몇 주
+  const everyOther = $("rcEvery").value === "2";         // 격주
+  if (!proId || !lessonTypeId || !time) return alert("프로·레슨·시간을 모두 선택하세요.");
+
+  // 패턴 문서 저장
+  await addDoc(collection(db, "recurring"), {
+    memberId: me.uid, proId, proName, lessonTypeId, lessonName,
+    weekday, time, everyOther, weeks, createdAt: serverTimestamp()
+  });
+
+  // 해당 요일의 향후 날짜들 계산
+  const dates = [];
+  const today = new Date(); today.setHours(0,0,0,0);
+  let count = 0, wk = 0;
+  for (let i = 0; i < weeks * 7 + 7 && count < weeks; i++) {
+    const d = new Date(today); d.setDate(d.getDate() + i);
+    if (d.getDay() === weekday) {
+      if (!everyOther || wk % 2 === 0) { dates.push(d.toISOString().slice(0,10)); count++; }
+      wk++;
+    }
+  }
+
+  // 각 날짜의 슬롯을 찾아 트랜잭션 예약 (열려있는 것만)
+  let ok = 0, skip = 0;
+  for (const date of dates) {
+    const ss = await getDocs(query(collection(db, "slots"),
+      where("proId", "==", proId), where("date", "==", date), where("time", "==", time)));
+    if (ss.empty || ss.docs[0].data().status !== "open") { skip++; continue; }
+    const slotId = ss.docs[0].id;
+    try {
+      await runTransaction(db, async (tx) => {
+        const sRef = doc(db, "slots", slotId);
+        const fresh = await tx.get(sRef);
+        if (!fresh.exists() || fresh.data().status !== "open") throw new Error("taken");
+        tx.update(sRef, { status: "booked", bookedBy: me.uid });
+        tx.set(doc(collection(db, "bookings")), {
+          slotId, proId, proName, lessonTypeId, lessonName,
+          memberId: me.uid, memberName: myProfile?.name || "회원",
+          date, time, people: 1, request: "[반복예약]",
+          status: "confirmed", createdAt: serverTimestamp()
+        });
+      });
+      ok++;
+    } catch { skip++; }
+  }
+  alert(`반복예약 완료!\n예약 성공: ${ok}건${skip ? ` / 불가(미개설·마감): ${skip}건` : ""}`);
+  loadMyRecurring();
+};
+
+async function loadMyRecurring() {
+  const box = $("rcList");
+  const snap = await getDocs(query(collection(db, "recurring"), where("memberId", "==", me.uid)));
+  if (snap.empty) { box.innerHTML = `<p class="hint sm">등록된 반복예약이 없습니다.</p>`; return; }
+  const W = ["일","월","화","수","목","금","토"];
+  let html = `<p class="mini-label">내 반복예약</p>`;
+  snap.docs.forEach(d => {
+    const r = d.data();
+    html += `<div class="bk-card"><div class="bk-top">
+      <div><b>${r.proName}</b> · ${r.lessonName}</div>
+      <button class="mini-btn danger" onclick="deleteRecurring('${d.id}')">삭제</button>
+    </div><div class="bk-time">매${r.everyOther ? "격주" : "주"} ${W[r.weekday]} ${r.time}</div></div>`;
+  });
+  box.innerHTML = html;
+}
+window.deleteRecurring = async (id) => {
+  if (!confirm("이 반복예약 패턴을 삭제할까요? (이미 잡힌 예약은 내 예약에서 개별 취소하세요)")) return;
+  await deleteDoc(doc(db, "recurring", id)); loadMyRecurring();
+};
+
+// ============================================================
+// [4-C] 수강권 — 보유 현황 (발급은 관리자, 차감은 예약 시)
+// ============================================================
+window.openPasses = async () => {
+  show("passView");
+  const box = $("passList");
+  box.innerHTML = `<p class="hint">불러오는 중…</p>`;
+  const snap = await getDocs(query(collection(db, "passes"), where("memberId", "==", me.uid)));
+  if (snap.empty) { box.innerHTML = `<p class="hint">보유한 수강권이 없습니다.<br>관리자에게 발급을 요청하세요.</p>`; return; }
+  const list = snap.docs.map(d => d.data());
+  const active = list.filter(p => (p.remaining || 0) > 0);
+  const used = list.filter(p => (p.remaining || 0) <= 0);
+  let html = `<p class="mini-label">사용 가능</p>`;
+  if (!active.length) html += `<p class="hint sm">사용 가능한 수강권이 없습니다.</p>`;
+  active.forEach(p => {
+    html += `<div class="bk-card"><div class="bk-top">
+      <div><b>${p.lessonName || "수강권"}</b></div>
+      <span class="bk-badge" style="color:var(--accent)">${p.remaining}/${p.total}회</span></div>
+      <div class="sub">만료: ${p.expireAt || "-"}</div></div>`;
+  });
+  if (used.length) {
+    html += `<p class="mini-label" style="margin-top:18px">소진됨</p>`;
+    used.forEach(p => html += `<div class="bk-card dim"><b>${p.lessonName || "수강권"}</b> · 0/${p.total}회</div>`);
+  }
+  box.innerHTML = html;
+};
+
+// 관리자: 수강권 발급
+window.issuePass = async () => {
+  const phone = prompt("발급 대상 회원의 연락처? (정확히 일치해야 함)"); if (!phone) return;
+  const us = await getDocs(query(collection(db, "users"), where("phone", "==", phone)));
+  if (us.empty) { alert("해당 연락처의 회원을 찾을 수 없습니다."); return; }
+  const memberId = us.docs[0].id, memberName = us.docs[0].data().name;
+  const lessonName = prompt("수강권 이름? (예: 개인30분 10회권)") || "수강권";
+  const total = parseInt(prompt("총 횟수?") || "10", 10);
+  const expireAt = prompt("만료일? (YYYY-MM-DD)") || "";
+  try {
+    await addDoc(collection(db, "passes"),
+      { memberId, memberName, lessonName, total, remaining: total, expireAt, status: "active", createdAt: serverTimestamp() });
+    alert(`${memberName}님에게 ${lessonName}(${total}회) 발급 완료`);
+  } catch (e) { alert("발급 실패: " + e.message); }
+};
