@@ -190,26 +190,59 @@ window.openStep2 = openStep2;
 function openStep2() {
   show("step2View");
   $("s2Pro").textContent = `${draft.proName} · ${draft.lessonName}`;
+  const t = new Date(); calCursor = new Date(t.getFullYear(), t.getMonth(), 1);
   renderDateBar();
 }
 
 // ---------- STEP2: 날짜바 + 시간대 접기(F2·F3) ----------
+let calCursor = null; // 현재 보고 있는 달의 1일
 function renderDateBar() {
-  const bar = $("dateBar"); bar.innerHTML = "";
-  for (let i = 0; i < 14; i++) {
-    const d = new Date(); d.setDate(d.getDate() + i);
-    const ds = d.toISOString().slice(0, 10);
-    const w = ["일","월","화","수","목","금","토"][d.getDay()];
-    const el = document.createElement("button");
-    el.className = "date-pill";
-    el.innerHTML = `<span class="dow">${w}</span><span class="dnum">${d.getDate()}</span>`;
-    el.onclick = () => { draft.date = ds;
-      document.querySelectorAll("#dateBar .date-pill").forEach(c => c.classList.remove("on"));
-      el.classList.add("on"); loadSlots(); };
-    bar.appendChild(el);
-  }
+  if (!calCursor) { const t = new Date(); calCursor = new Date(t.getFullYear(), t.getMonth(), 1); }
+  renderCalendar();
   $("slotZones").innerHTML = `<p class="hint">날짜를 선택하세요.</p>`;
 }
+
+window.calMove = (delta) => {
+  calCursor = new Date(calCursor.getFullYear(), calCursor.getMonth() + delta, 1);
+  renderCalendar();
+};
+
+function renderCalendar() {
+  const bar = $("dateBar");
+  const year = calCursor.getFullYear(), month = calCursor.getMonth();
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const firstDay = new Date(year, month, 1).getDay();      // 0=일
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const W = ["일", "월", "화", "수", "목", "금", "토"];
+
+  let html = `<div class="cal-head">
+      <button class="cal-nav" onclick="calMove(-1)">‹</button>
+      <span class="cal-title">${year}년 ${month + 1}월</span>
+      <button class="cal-nav" onclick="calMove(1)">›</button>
+    </div>
+    <div class="cal-grid">`;
+  W.forEach((w, i) => html += `<div class="cal-dow ${i===0?'sun':''} ${i===6?'sat':''}">${w}</div>`);
+  for (let i = 0; i < firstDay; i++) html += `<div></div>`; // 빈칸
+  for (let d = 1; d <= daysInMonth; d++) {
+    const cur = new Date(year, month, d);
+    const ds = `${year}-${String(month+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    const past = cur < today;
+    const dow = cur.getDay();
+    const sel = draft.date === ds ? "sel" : "";
+    const cls = past ? "cal-day past" : `cal-day ${sel} ${dow===0?'sun':''} ${dow===6?'sat':''}`;
+    html += past
+      ? `<div class="${cls}">${d}</div>`
+      : `<button class="${cls}" onclick="pickDate('${ds}')">${d}</button>`;
+  }
+  html += `</div>`;
+  bar.innerHTML = html;
+}
+
+window.pickDate = (ds) => {
+  draft.date = ds;
+  renderCalendar();   // 선택 강조 갱신
+  loadSlots();
+};
 
 async function loadSlots() {
   const box = $("slotZones");

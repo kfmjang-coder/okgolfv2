@@ -15,7 +15,9 @@
     --ink:#eaf6ec; --mut:#8fb39a; --off:#2a4636;
   }
   *{box-sizing:border-box;margin:0;padding:0}
+  html{overscroll-behavior-y:contain}
   body{font-family:Pretendard,system-ui,sans-serif;background:var(--bg);color:var(--ink);
+    overscroll-behavior-y:contain;
     min-height:100dvh;background-image:radial-gradient(120% 80% at 80% -10%,#1a4e2e 0,transparent 55%),
     radial-gradient(90% 60% at -10% 110%,#0d3a22 0,transparent 50%)}
   .config-warn{background:#3a2f08;color:#ffe08a;font-size:13px;padding:10px 16px;line-height:1.5}
@@ -63,14 +65,24 @@
     background:var(--bg2);color:var(--ink);font-size:14px;cursor:pointer;margin:0 8px 8px 0;font-family:inherit}
   .chip.on{background:var(--accent);color:var(--accent-d);border-color:var(--accent);font-weight:700}
   /* STEP2 날짜바 */
-  .date-bar{display:flex;gap:8px;overflow-x:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
-  .date-pill{flex:0 0 auto;width:52px;padding:10px 0;border-radius:12px;border:1px solid var(--line);
-    background:var(--bg2);color:var(--ink);cursor:pointer;display:flex;flex-direction:column;
-    align-items:center;gap:2px;font-family:inherit}
-  .date-pill .dow{font-size:11px;color:var(--mut)}
-  .date-pill .dnum{font-size:17px;font-weight:700}
-  .date-pill.on{background:var(--accent);color:var(--accent-d);border-color:var(--accent)}
-  .date-pill.on .dow{color:var(--accent-d)}
+  /* 월 캘린더 */
+  .cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+  .cal-title{font-size:16px;font-weight:700}
+  .cal-nav{width:38px;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--bg2);
+    color:var(--ink);font-size:20px;cursor:pointer;font-family:inherit}
+  .cal-nav:active{background:var(--card)}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+  .cal-dow{text-align:center;font-size:12px;color:var(--mut);padding:4px 0}
+  .cal-dow.sun{color:#ff9b9b}
+  .cal-dow.sat{color:#9bc4ff}
+  .cal-day{aspect-ratio:1;border:1px solid var(--line);border-radius:10px;background:var(--bg2);
+    color:var(--ink);font-size:15px;font-weight:500;cursor:pointer;font-family:inherit;
+    display:flex;align-items:center;justify-content:center;padding:0}
+  .cal-day.sun{color:#ff9b9b}
+  .cal-day.sat{color:#9bc4ff}
+  .cal-day:active{background:var(--card)}
+  .cal-day.sel{background:var(--accent);color:var(--accent-d);border-color:var(--accent);font-weight:800}
+  .cal-day.past{opacity:.3;border-color:transparent;background:transparent;cursor:default}
   /* 시간대 접기 */
   .zone{border:1px solid var(--line);border-radius:14px;margin-bottom:10px;overflow:hidden}
   .zone.dim{opacity:.5}
@@ -147,8 +159,16 @@
 </header>
 
 <div class="wrap">
+  <!-- 인증 확인 중 로딩 -->
+  <section id="loadingView" class="view active">
+    <div style="text-align:center;padding:80px 0;color:var(--mut)">
+      <div class="logo" style="font-size:40px;margin-bottom:16px">OK<span>골프</span></div>
+      <p>불러오는 중…</p>
+    </div>
+  </section>
+
   <!-- 로그인/가입 -->
-  <section id="authView" class="view active">
+  <section id="authView" class="view">
     <h2 id="authTitle">로그인</h2>
     <p class="desc">레슨 예약을 위해 로그인하세요.</p>
     <div id="signupFields" class="hide">
@@ -184,7 +204,7 @@
   <section id="step2View" class="view">
     <div class="topbar"><button class="back" onclick="show('step1View')">‹</button><h3 style="margin:0">시간 선택</h3></div>
     <p class="sub" id="s2Pro" style="margin-bottom:10px"></p>
-    <div class="date-bar" id="dateBar"></div>
+    <div id="dateBar"></div>
     <div id="slotZones" style="margin-top:12px"></div>
   </section>
 
@@ -295,10 +315,9 @@
     el.classList.add('on');
   };
   const mo = new MutationObserver(() => {
-    const authed = document.getElementById('homeView').classList.contains('active') ||
-                   document.getElementById('step1View').classList.contains('active') ||
-                   !document.getElementById('authView').classList.contains('active');
-    document.body.classList.toggle('authed', authed && !document.getElementById('authView').classList.contains('active'));
+    const onAuth = document.getElementById('authView').classList.contains('active');
+    const onLoading = document.getElementById('loadingView').classList.contains('active');
+    document.body.classList.toggle('authed', !onAuth && !onLoading);
   });
   document.querySelectorAll('.view').forEach(v => mo.observe(v, { attributes:true, attributeFilter:['class'] }));
 </script>
