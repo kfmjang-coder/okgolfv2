@@ -23,6 +23,7 @@ let me = null;          // auth user
 let myProfile = null;   // users/{uid} 문서
 let draft = { proId: null, proName: null, lessonTypeId: null, lessonName: null,
               date: null, time: null, slotId: null, people: 1 };
+let draftWorkHours = null;  // 선택한 프로의 운영시간
 
 // 미설정 시 안내 배너
 if (!isConfigured) {
@@ -162,7 +163,7 @@ window.startNewBooking = async () => {
     el.className = "pick-card";
     el.innerHTML = `<div class="avatar">${p.name.slice(0,2)}</div>
       <div><b>${p.name}</b><div class="sub">${p.title || "프로"}</div></div>`;
-    el.onclick = () => { draft.proId = d.id; draft.proName = p.name; pickPro(el); loadLessonTypes(); };
+    el.onclick = () => { draft.proId = d.id; draft.proName = p.name; draftWorkHours = p.workHours || null; pickPro(el); loadLessonTypes(); };
     pe.appendChild(el);
   });
   $("lessonPick").innerHTML = "";
@@ -178,7 +179,21 @@ window.toggleRecurOptions = () => {
   const on = $("recurOn").checked;
   $("recurOptions").classList.toggle("hide", !on);
   $("toStep2").textContent = on ? "반복예약 등록" : "다음";
+  if (on) fillRecurTimeOptions();
 };
+
+// 선택한 프로의 운영시간 범위로 20분 단위 시간 옵션 채우기
+function fillRecurTimeOptions() {
+  const sel = $("rcTime"); if (!sel) return;
+  const wh = draftWorkHours || { start: "10:00", end: "22:00" };
+  const sh = parseInt(wh.start.slice(0,2),10), eh = parseInt(wh.end.slice(0,2),10);
+  let o = "";
+  for (let h = sh; h < eh; h++) for (const m of [0,20,40]) {
+    const t = String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
+    o += `<option value="${t}">${t}</option>`;
+  }
+  sel.innerHTML = o;
+}
 
 // "다음" 버튼: 반복이면 등록, 아니면 날짜선택으로
 window.step1Next = () => {
@@ -267,10 +282,19 @@ window.pickDate = (ds) => {
 async function loadSlots() {
   const box = $("slotZones");
   box.innerHTML = `<p class="hint">불러오는 중…</p>`;
-  const ssSnap = await getDocs(query(collection(db, "slots"),
-    where("proId", "==", draft.proId), where("date", "==", draft.date)));
-  const ss = { empty: ssSnap.empty, docs: ssSnap.docs.sort((a, b) => a.data().time.localeCompare(b.data().time)) };
-  if (ss.empty) { box.innerHTML = `<p class="hint">이 날짜에 열린 시간이 없습니다.</p>`; return; }
+  const [ssSnap, blkSnap] = await Promise.all([
+    getDocs(query(collection(db, "slots"),
+      where("proId", "==", draft.proId), where("date", "==", draft.date))),
+    getDocs(query(collection(db, "blocks"),
+      where("proId", "==", draft.proId), where("date", "==", draft.date)))
+  ]);
+  const blocks = blkSnap.docs.map(d => d.data());
+  // 차단된 시간대 슬롯 제외
+  const docs = ssSnap.docs
+    .filter(d => !isBlocked(blocks, d.data().time))
+    .sort((a, b) => a.data().time.localeCompare(b.data().time));
+  const ss = { empty: docs.length === 0, docs };
+  if (ss.empty) { box.innerHTML = `<p class="hint">이 날짜에 예약 가능한 시간이 없습니다.</p>`; return; }
 
   // 시간대 3구간 분류
   const zones = { morning: [], afternoon: [], evening: [] };
@@ -508,12 +532,23 @@ async function renderAdminStatus() {
 }
 
 // ---------- 슬롯 관리: 프로·날짜 선택 → 시간 열기/닫기 ----------
-let adminSlotState = { proId: null, date: null };
+let adminSlotState = { proId: null, date: null, start: 10, end: 22 };
+
+// 차단 여부 판정 (하루 전체 or 시간대 범위)
+function isBlocked(blocks, time) {
+  return blocks.some(b => {
+    if (b.allDay) return true;
+    return b.startTime && b.endTime && time >= b.startTime && time < b.endTime;
+  });
+}
 async function renderAdminSlots() {
   const box = $("adminBody");
   const ps = await getDocs(query(collection(db, "pros"), where("active", "==", true)));
   let opts = `<option value="">프로 선택</option>`;
-  ps.forEach(d => opts += `<option value="${d.id}">${d.data().name}</option>`);
+  ps.forEach(d => {
+    const wh = d.data().workHours || { start: "10:00", end: "22:00" };
+    opts += `<option value="${d.id}" data-start="${wh.start}" data-end="${wh.end}">${d.data().name}</option>`;
+  });
   const today = new Date().toISOString().slice(0, 10);
   box.innerHTML = `
     <p class="mini-label">슬롯 열기 / 닫기</p>
@@ -522,34 +557,102 @@ async function renderAdminSlots() {
     <div id="asGrid" style="margin-top:14px"><p class="hint">프로와 날짜를 선택하세요.</p></div>`;
 }
 window.onAdminSlotChange = async () => {
-  adminSlotState.proId = $("asPro").value;
+  const sel = $("asPro");
+  adminSlotState.proId = sel.value;
   adminSlotState.date = $("asDate").value;
+  const opt = sel.selectedOptions[0];
+  adminSlotState.start = opt?.dataset.start ? parseInt(opt.dataset.start.slice(0,2),10) : 10;
+  adminSlotState.end = opt?.dataset.end ? parseInt(opt.dataset.end.slice(0,2),10) : 22;
   const grid = $("asGrid");
   if (!adminSlotState.proId || !adminSlotState.date) {
     grid.innerHTML = `<p class="hint">프로와 날짜를 선택하세요.</p>`; return;
   }
   grid.innerHTML = `<p class="hint">불러오는 중…</p>`;
-  // 기존 슬롯 조회
-  const snap = await getDocs(query(collection(db, "slots"),
-    where("proId", "==", adminSlotState.proId), where("date", "==", adminSlotState.date)));
+  // 기존 슬롯 + 차단 조회
+  const [snap, blkSnap] = await Promise.all([
+    getDocs(query(collection(db, "slots"),
+      where("proId", "==", adminSlotState.proId), where("date", "==", adminSlotState.date))),
+    getDocs(query(collection(db, "blocks"),
+      where("proId", "==", adminSlotState.proId), where("date", "==", adminSlotState.date)))
+  ]);
   const existing = {};
   snap.docs.forEach(d => existing[d.data().time] = { id: d.id, ...d.data() });
-  // 10~22시 20분 단위 버튼 (있으면 상태 표시, 없으면 닫힘)
-  let html = `<p class="sub" style="margin-bottom:8px">탭하여 열기/닫기 · 🟢열림 🔴예약됨 ⚪닫힘</p>
+  const blocks = blkSnap.docs.map(d => d.data());
+  // 운영시간 범위 20분 단위 버튼
+  let html = `<p class="sub" style="margin-bottom:8px">운영시간 ${adminSlotState.start}~${adminSlotState.end}시 · 탭하여 열기/닫기 · 🟢열림 🔴예약됨 ⚪닫힘</p>
     <div class="as-grid">`;
-  for (let h = 10; h < 22; h++) {
+  for (let h = adminSlotState.start; h < adminSlotState.end; h++) {
     for (const m of [0, 20, 40]) {
       const t = String(h).padStart(2,"0") + ":" + String(m).padStart(2,"0");
       const ex = existing[t];
+      const blocked = isBlocked(blocks, t);
       let cls = "closed", label = t;
-      if (ex && ex.status === "open") cls = "open";
+      if (blocked) { cls = "blocked"; label = t; }
+      else if (ex && ex.status === "open") cls = "open";
       else if (ex && ex.status === "booked") cls = "booked";
       html += `<button class="as-slot ${cls}" onclick="toggleSlot('${t}')"
-        ${cls === "booked" ? "disabled" : ""}>${label}</button>`;
+        ${(cls === "booked" || cls === "blocked") ? "disabled" : ""}>${label}</button>`;
     }
   }
   html += `</div>`;
+  // 차단 등록 영역
+  html += `<div class="block-box">
+    <p class="mini-label">🚫 예약 차단 (개인사정 등)</p>
+    <label style="display:flex;align-items:center;gap:8px;margin:8px 0;font-size:14px">
+      <input type="radio" name="blkType" value="allDay" checked onchange="onBlkType()" style="width:auto;margin:0"> 하루 전체 휴무</label>
+    <label style="display:flex;align-items:center;gap:8px;margin:8px 0;font-size:14px">
+      <input type="radio" name="blkType" value="range" onchange="onBlkType()" style="width:auto;margin:0"> 시간대만 차단</label>
+    <div id="blkRange" class="hide" style="display:flex;gap:8px;margin:8px 0">
+      <select id="blkStart">${hourOptions(adminSlotState.start, adminSlotState.end)}</select>
+      <span style="align-self:center">~</span>
+      <select id="blkEnd">${hourOptions(adminSlotState.start, adminSlotState.end)}</select>
+    </div>
+    <input id="blkReason" placeholder="차단 이유 (예: 개인 사정, 외부 레슨)" style="margin-top:6px">
+    <button class="btn-ghost" onclick="addBlock()" style="margin-top:10px">차단 등록</button>`;
+  // 현재 차단 목록
+  if (blocks.length) {
+    html += `<p class="sub" style="margin-top:14px">현재 차단</p>`;
+    blkSnap.docs.forEach(d => {
+      const b = d.data();
+      const range = b.allDay ? "하루 전체" : `${b.startTime}~${b.endTime}`;
+      html += `<div class="bk-card" style="margin-top:8px"><div class="bk-top">
+        <div>${range}${b.reason ? ` · ${b.reason}` : ""}</div>
+        <button class="mini-btn danger" onclick="removeBlock('${d.id}')">해제</button></div></div>`;
+    });
+  }
+  html += `</div>`;
   grid.innerHTML = html;
+};
+
+function hourOptions(start, end) {
+  let o = "";
+  for (let h = start; h <= end; h++) o += `<option value="${String(h).padStart(2,"0")}:00">${h}:00</option>`;
+  return o;
+}
+window.onBlkType = () => {
+  const isRange = document.querySelector('input[name="blkType"]:checked').value === "range";
+  $("blkRange").classList.toggle("hide", !isRange);
+};
+
+// 차단 등록
+window.addBlock = async () => {
+  const { proId, date } = adminSlotState;
+  if (!proId || !date) { alert("프로와 날짜를 먼저 선택하세요."); return; }
+  const isRange = document.querySelector('input[name="blkType"]:checked').value === "range";
+  const reason = $("blkReason").value.trim();
+  const data = { proId, date, reason, allDay: !isRange, createdAt: serverTimestamp() };
+  if (isRange) {
+    const s = $("blkStart").value, e = $("blkEnd").value;
+    if (s >= e) { alert("시작 시각이 종료보다 빨라야 합니다."); return; }
+    data.startTime = s; data.endTime = e;
+  }
+  try { await addDoc(collection(db, "blocks"), data); onAdminSlotChange(); }
+  catch (err) { alert("차단 등록 실패: " + err.message); }
+};
+window.removeBlock = async (id) => {
+  if (!confirm("이 차단을 해제할까요?")) return;
+  try { await deleteDoc(doc(db, "blocks", id)); onAdminSlotChange(); }
+  catch (err) { alert("해제 실패: " + err.message); }
 };
 
 // 슬롯 토글: 닫힘→열기(생성), 열림→닫기(삭제). 예약된 건 불가.
@@ -571,18 +674,21 @@ window.toggleSlot = async (time) => {
   } catch (e) { alert("처리 실패: " + e.message); }
 };
 
-// 하루 일괄 열기 (운영시간 10~22시 전체)
+// 하루 일괄 열기 (운영시간 범위, 차단 시간 제외)
 window.openWholeDay = async () => {
-  const { proId, date } = adminSlotState;
+  const { proId, date, start, end } = adminSlotState;
   if (!proId || !date) { alert("프로와 날짜를 먼저 선택하세요."); return; }
-  if (!confirm(`${date} 10~22시를 모두 열까요?`)) return;
-  const snap = await getDocs(query(collection(db, "slots"),
-    where("proId", "==", proId), where("date", "==", date)));
+  if (!confirm(`${date} ${start}~${end}시를 모두 열까요?`)) return;
+  const [snap, blkSnap] = await Promise.all([
+    getDocs(query(collection(db, "slots"), where("proId", "==", proId), where("date", "==", date))),
+    getDocs(query(collection(db, "blocks"), where("proId", "==", proId), where("date", "==", date)))
+  ]);
   const have = new Set(snap.docs.map(d => d.data().time));
+  const blocks = blkSnap.docs.map(d => d.data());
   const batch = writeBatch(db);
-  for (let h = 10; h < 22; h++) for (const m of [0,20,40]) {
+  for (let h = start; h < end; h++) for (const m of [0,20,40]) {
     const t = String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
-    if (!have.has(t)) batch.set(doc(collection(db, "slots")),
+    if (!have.has(t) && !isBlocked(blocks, t)) batch.set(doc(collection(db, "slots")),
       { proId, date, time: t, durationMin: 20, status: "open", bookedBy: null });
   }
   try { await batch.commit(); onAdminSlotChange(); }
@@ -600,10 +706,14 @@ async function renderAdminManage() {
   let html = `<p class="mini-label">프로</p>`;
   ps.docs.forEach(d => {
     const p = d.data();
+    const wh = p.workHours || { start: "10:00", end: "22:00" };
     html += `<div class="bk-card"><div class="bk-top">
       <div><b>${p.name}</b> · ${p.title || ""}</div>
       <button class="mini-btn" onclick="toggleProActive('${d.id}',${p.active})">${p.active ? "비활성" : "활성"}</button>
-    </div><div class="sub">${p.active ? "활성" : "비활성"}</div></div>`;
+    </div>
+    <div class="sub">${p.active ? "활성" : "비활성"} · 운영 ${wh.start}~${wh.end}</div>
+    <button class="mini-btn" onclick="setWorkHours('${d.id}','${wh.start}','${wh.end}')" style="margin-top:8px">⏰ 운영시간 설정</button>
+    </div>`;
   });
   html += `<button class="btn-ghost" onclick="addPro()" style="margin-top:6px">+ 프로 추가</button>`;
   html += `<p class="mini-label" style="margin-top:20px">레슨 종류</p>`;
@@ -623,8 +733,22 @@ window.toggleProActive = async (id, cur) => {
 window.addPro = async () => {
   const name = prompt("프로 이름?"); if (!name) return;
   const title = prompt("직함? (예: 대표프로)") || "프로";
-  try { await addDoc(collection(db, "pros"), { name, title, active: true }); renderAdminManage(); }
+  try { await addDoc(collection(db, "pros"),
+    { name, title, active: true, workHours: { start: "10:00", end: "22:00" } });
+    renderAdminManage(); }
   catch (e) { alert("추가 실패: " + e.message); }
+};
+// 운영시간 설정 (정시 단위, 예: 10 / 22)
+window.setWorkHours = async (id, curStart, curEnd) => {
+  const s = prompt(`운영 시작 시각 (정시, 0~23)\n예: 9 → 09:00`, parseInt(curStart,10));
+  if (s === null) return;
+  const e = prompt(`운영 종료 시각 (정시, 1~24)\n예: 22 → 22:00`, parseInt(curEnd,10));
+  if (e === null) return;
+  const sh = parseInt(s,10), eh = parseInt(e,10);
+  if (isNaN(sh) || isNaN(eh) || sh < 0 || eh > 24 || sh >= eh) { alert("시작<종료, 0~24 범위로 입력하세요."); return; }
+  const start = String(sh).padStart(2,"0")+":00", end = String(eh).padStart(2,"0")+":00";
+  try { await updateDoc(doc(db, "pros", id), { workHours: { start, end } }); renderAdminManage(); }
+  catch (err) { alert("설정 실패: " + err.message); }
 };
 window.addLesson = async () => {
   const name = prompt("레슨 이름? (예: 개인 30분)"); if (!name) return;

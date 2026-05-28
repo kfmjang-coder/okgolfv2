@@ -148,6 +148,8 @@
   .as-slot.closed{background:var(--bg2);color:var(--mut)}
   .as-slot.open{background:var(--accent2);color:var(--accent-d);border-color:var(--accent2)}
   .as-slot.booked{background:#5a2424;color:#ffb3b3;border-color:#6b2b2b;cursor:not-allowed}
+  .as-slot.blocked{background:#3a2f08;color:#caa84a;border-color:#5c4a12;cursor:not-allowed;text-decoration:line-through}
+  .block-box{margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
   .mini-btn{padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);
     color:var(--ink);font-size:13px;cursor:pointer;font-family:inherit}
   .mini-btn.danger{color:#ff9b9b;border-color:#6b2b2b}
@@ -208,7 +210,7 @@
         <p class="sub" style="margin-bottom:10px">선택한 프로·레슨으로 매주 같은 요일·시간에 자동 예약합니다.</p>
         <div class="field"><label>요일</label>
           <select id="rcWeekday"><option value="1">월</option><option value="2">화</option><option value="3">수</option><option value="4">목</option><option value="5">금</option><option value="6">토</option><option value="0">일</option></select></div>
-        <div class="field"><label>시간</label><input id="rcTime" type="time" step="1200"></div>
+        <div class="field"><label>시간</label><select id="rcTime"></select></div>
         <div class="field"><label>반복</label>
           <select id="rcEvery"><option value="1">매주</option><option value="2">격주</option></select></div>
         <div class="field"><label>기간</label>
