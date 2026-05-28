@@ -457,19 +457,43 @@ async function renderMyRecurring(box) {
 
 function bookingCard(b, cancelable) {
   const statusLabel = b.status === "cancelled" ? "취소됨"
-    : (b.date < new Date().toISOString().slice(0,10) ? "완료" : "예약됨");
+    : b.attendance === "noshow" ? "노쇼"
+    : (b.status === "done" || b.date < new Date().toISOString().slice(0,10)) ? "완료" : "예약됨";
   const btn = cancelable
     ? `<button class="cancel-btn" onclick="cancelBooking('${b.id}','${b.slotId}')">예약 취소</button>`
     : "";
+  // 완료(출석)된 레슨: 레슨일지 + 별점
+  let extra = "";
+  const isDone = b.status === "done" && b.attendance === "present";
+  if (isDone) {
+    if (b.journal) extra += `<div class="journal-box"><b>📝 레슨일지</b><div class="sub" style="margin-top:4px;white-space:pre-wrap">${esc(b.journal)}</div></div>`;
+    if (b.rating) {
+      extra += `<div class="rating-done">평가 완료 ${"★".repeat(b.rating)}${"☆".repeat(5-b.rating)}</div>`;
+    } else {
+      extra += `<div class="rating-input" id="rate-${b.id}">
+        <span class="sub">레슨은 어떠셨나요?</span>
+        <div class="stars">${[1,2,3,4,5].map(n => `<span class="star" onclick="rateBooking('${b.id}',${n})">☆</span>`).join("")}</div>
+      </div>`;
+    }
+  }
   return `<div class="bk-card ${b.status === 'cancelled' ? 'dim' : ''}">
       <div class="bk-top">
         <div><b>${b.proName}</b> · ${b.lessonName}</div>
         <span class="bk-badge">${statusLabel}</span>
       </div>
       <div class="bk-time">${fmtDate(b.date)} ${b.time} · ${b.people || 1}명</div>
+      ${extra}
       ${btn}
     </div>`;
 }
+
+// 회원: 별점 남기기
+window.rateBooking = async (bookingId, rating) => {
+  try {
+    await updateDoc(doc(db, "bookings", bookingId), { rating });
+    openMyBookings();
+  } catch (e) { alert("평가 저장 실패: " + e.message); }
+};
 
 // 취소: 예약을 cancelled로 + 슬롯을 다시 open으로 (트랜잭션)
 window.cancelBooking = async (bookingId, slotId) => {
@@ -516,20 +540,87 @@ async function renderAdminStatus() {
   const today = new Date().toISOString().slice(0, 10);
   const snap = await getDocs(query(collection(db, "bookings"), where("date", "==", today)));
   const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-    .filter(b => b.status === "confirmed")
+    .filter(b => b.status === "confirmed" || b.status === "done")
     .sort((a, b) => (a.time + a.proName).localeCompare(b.time + b.proName));
   let html = `<p class="mini-label">오늘 예약 (${fmtDate(today)}) · ${list.length}건</p>`;
   if (list.length === 0) html += `<p class="hint">오늘 예약이 없습니다.</p>`;
   list.forEach(b => {
+    const att = b.attendance;  // undefined | "present" | "noshow"
+    const attLabel = att === "present" ? `<span class="att-badge ok">출석</span>`
+      : att === "noshow" ? `<span class="att-badge no">노쇼</span>` : "";
+    const buttons = att ? "" : `<div class="att-btns">
+        <button class="att-btn ok" onclick="markAttendance('${b.id}','${b.memberId}','${b.lessonTypeId}','present')">출석</button>
+        <button class="att-btn no" onclick="markAttendance('${b.id}','${b.memberId}','${b.lessonTypeId}','noshow')">노쇼</button>
+      </div>`;
+    // 출석 완료 건: 레슨일지 작성/표시
+    let journal = "";
+    if (att === "present") {
+      if (b.journal) journal = `<div class="journal-box"><b>📝 레슨일지</b><div class="sub" style="margin-top:4px;white-space:pre-wrap">${esc(b.journal)}</div>
+        <button class="mini-btn" onclick="writeJournal('${b.id}',${JSON.stringify(b.journal).replace(/"/g,'&quot;')})" style="margin-top:8px">수정</button></div>`;
+      else journal = `<button class="mini-btn" onclick="writeJournal('${b.id}','')" style="margin-top:10px">📝 레슨일지 작성</button>`;
+    }
     html += `<div class="bk-card">
-      <div class="bk-top"><div><b>${b.time}</b> · ${b.proName}</div>
+      <div class="bk-top"><div><b>${b.time}</b> · ${b.proName} ${attLabel}</div>
         <span class="bk-badge">${b.lessonName}</span></div>
       <div class="bk-time" style="color:var(--ink)">${b.memberName || "회원"} · ${b.people || 1}명</div>
       ${b.request ? `<div class="sub" style="margin-top:6px">요청: ${b.request}</div>` : ""}
+      ${b.rating ? `<div class="sub" style="margin-top:6px">회원 평가: ${"★".repeat(b.rating)}</div>` : ""}
+      ${buttons}
+      ${journal}
     </div>`;
   });
   box.innerHTML = html;
 }
+
+// 출석 처리: present면 수강권 1회 차감(있으면), noshow면 페널티 카운트
+window.markAttendance = async (bookingId, memberId, lessonTypeId, status) => {
+  const label = status === "present" ? "출석" : "노쇼";
+  if (!confirm(`${label} 처리할까요?${status === "present" ? "\n(수강권 보유 시 1회 차감됩니다)" : ""}`)) return;
+  try {
+    await runTransaction(db, async (tx) => {
+      const bRef = doc(db, "bookings", bookingId);
+      // 차감할 수강권 찾기 (해당 레슨 또는 전체, 잔여>0, 만료 안 됨)
+      let passRef = null, passData = null;
+      if (status === "present") {
+        const today = new Date().toISOString().slice(0, 10);
+        const ps = await getDocs(query(collection(db, "passes"), where("memberId", "==", memberId)));
+        const usable = ps.docs
+          .map(d => ({ ref: d.ref, ...d.data() }))
+          .filter(p => (p.remaining || 0) > 0 && (!p.expireAt || p.expireAt >= today));
+        if (usable.length) { passRef = usable[0].ref; passData = usable[0]; }
+      }
+      // 노쇼 페널티: 회원 문서 읽기
+      let userRef = null, userSnap = null;
+      if (status === "noshow") {
+        userRef = doc(db, "users", memberId);
+        userSnap = await tx.get(userRef);
+      }
+      let freshPass = null;
+      if (passRef) freshPass = await tx.get(passRef);
+      // 쓰기
+      tx.update(bRef, { status: "done", attendance: status });
+      if (passRef && freshPass.exists()) {
+        const rem = (freshPass.data().remaining || 0) - 1;
+        tx.update(passRef, { remaining: Math.max(0, rem) });
+      }
+      if (userRef && userSnap.exists()) {
+        const cur = userSnap.data().penalty?.noShowCount || 0;
+        tx.update(userRef, { "penalty.noShowCount": cur + 1 });
+      }
+    });
+    renderAdminStatus();
+  } catch (e) { alert("처리 실패: " + e.message); }
+};
+
+// 관리자/프로: 레슨일지 작성
+window.writeJournal = async (bookingId, current) => {
+  const text = prompt("레슨일지를 입력하세요\n(회원이 '내 예약'에서 확인합니다)", current || "");
+  if (text === null) return;
+  try {
+    await updateDoc(doc(db, "bookings", bookingId), { journal: text.trim() });
+    renderAdminStatus();
+  } catch (e) { alert("저장 실패: " + e.message); }
+};
 
 // ---------- 슬롯 관리: 프로·날짜 선택 → 시간 열기/닫기 ----------
 let adminSlotState = { proId: null, date: null, start: 10, end: 22 };
@@ -783,7 +874,6 @@ async function loadPosts() {
   let list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
     .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
   if (boardCategory !== "all") list = list.filter(p => p.category === boardCategory);
-  // 공지 핀 먼저
   list.sort((a, b) => (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0));
   if (list.length === 0) { box.innerHTML = `<p class="hint">게시글이 없습니다.</p>`; return; }
   const catLabel = { notice: "공지", free: "자유", swing: "질문" };
@@ -799,10 +889,94 @@ async function loadPosts() {
       <div class="post-title">${esc(p.title)}</div>
       <div class="post-body">${esc(p.content)}</div>
       <div class="post-meta">${p.isAnonymous ? "익명" : esc(p.authorName || "회원")}</div>
+      <div class="post-actions">
+        <button class="like-btn" onclick="toggleLike('${p.id}')"><span id="like-ic-${p.id}">♡</span> <span id="like-cnt-${p.id}">${p.likeCount || 0}</span></button>
+        <button class="cmt-toggle" onclick="toggleComments('${p.id}')">💬 댓글</button>
+      </div>
+      <div class="cmt-area hide" id="cmt-${p.id}"></div>
     </div>`;
   });
   box.innerHTML = html;
+  // 좋아요 상태 표시 (내가 눌렀는지)
+  list.forEach(p => refreshLikeUI(p.id));
 }
+
+// 내가 좋아요 눌렀는지 확인해 하트 채우기
+async function refreshLikeUI(postId) {
+  try {
+    const mine = await getDoc(doc(db, "posts", postId, "likes", me.uid));
+    const ic = $(`like-ic-${postId}`);
+    if (ic) ic.textContent = mine.exists() ? "♥" : "♡";
+  } catch {}
+}
+
+// 좋아요 토글 (likes/{uid} 문서 + likeCount 트랜잭션)
+window.toggleLike = async (postId) => {
+  const likeRef = doc(db, "posts", postId, "likes", me.uid);
+  const postRef = doc(db, "posts", postId);
+  try {
+    await runTransaction(db, async (tx) => {
+      const likeSnap = await tx.get(likeRef);
+      const postSnap = await tx.get(postRef);
+      const cur = postSnap.data().likeCount || 0;
+      if (likeSnap.exists()) {
+        tx.delete(likeRef);
+        tx.update(postRef, { likeCount: Math.max(0, cur - 1) });
+      } else {
+        tx.set(likeRef, { createdAt: serverTimestamp() });
+        tx.update(postRef, { likeCount: cur + 1 });
+      }
+    });
+    // UI 갱신
+    const fresh = await getDoc(postRef);
+    $(`like-cnt-${postId}`).textContent = fresh.data().likeCount || 0;
+    refreshLikeUI(postId);
+  } catch (e) { alert("처리 실패: " + e.message); }
+};
+
+// 댓글 영역 토글 + 로드
+window.toggleComments = async (postId) => {
+  const area = $(`cmt-${postId}`);
+  if (!area.classList.contains("hide")) { area.classList.add("hide"); return; }
+  area.classList.remove("hide");
+  area.innerHTML = `<p class="sub">불러오는 중…</p>`;
+  const snap = await getDocs(collection(db, "posts", postId, "comments"));
+  const cmts = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+  let html = "";
+  cmts.forEach(c => {
+    const mine = c.authorId === me.uid || myProfile?.role === "admin";
+    const isStaff = c.authorRole === "admin" || c.authorRole === "pro";
+    html += `<div class="cmt ${isStaff ? 'staff' : ''}">
+      <div><b>${esc(c.authorName)}</b>${isStaff ? ' <span class="staff-badge">프로</span>' : ''}
+        ${mine ? `<button class="cmt-del" onclick="deleteComment('${postId}','${c.id}')">×</button>` : ''}</div>
+      <div class="sub">${esc(c.content)}</div></div>`;
+  });
+  html += `<div class="cmt-write">
+    <input id="cmt-in-${postId}" placeholder="댓글 입력">
+    <button onclick="addComment('${postId}')">등록</button></div>`;
+  area.innerHTML = html;
+};
+
+window.addComment = async (postId) => {
+  const inp = $(`cmt-in-${postId}`);
+  const content = inp.value.trim(); if (!content) return;
+  try {
+    await addDoc(collection(db, "posts", postId, "comments"), {
+      content, authorId: me.uid, authorName: myProfile?.name || "회원",
+      authorRole: myProfile?.role || "member", createdAt: serverTimestamp()
+    });
+    $(`cmt-${postId}`).classList.add("hide");
+    toggleComments(postId);  // 다시 열며 갱신
+  } catch (e) { alert("댓글 등록 실패: " + e.message); }
+};
+window.deleteComment = async (postId, cid) => {
+  if (!confirm("댓글을 삭제할까요?")) return;
+  try {
+    await deleteDoc(doc(db, "posts", postId, "comments", cid));
+    const area = $(`cmt-${postId}`); area.classList.add("hide"); toggleComments(postId);
+  } catch (e) { alert("삭제 실패: " + e.message); }
+};
 
 window.openPostWrite = () => show("postWriteView");
 window.createPost = async () => {
