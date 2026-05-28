@@ -81,10 +81,13 @@ window.googleLogin = async () => {
   catch (e) { alert("구글 로그인 실패: " + e.message); }
 };
 window.logout = () => signOut(auth);
+let signupMode = false;
 window.toggleAuth = () => {
-  $("signupFields").classList.toggle("hide");
-  $("authTitle").textContent = $("signupFields").classList.contains("hide") ? "로그인" : "회원가입";
+  signupMode = !signupMode;
+  $("signupFields").classList.toggle("hide", !signupMode);
+  $("authTitle").textContent = signupMode ? "회원가입" : "로그인";
 };
+window.submitAuth = () => { if (signupMode) signup(); else login(); };
 
 // ---------- 홈: 다가오는 예약(F6) + 단골 1탭(F1) ----------
 async function renderHome() {
@@ -164,6 +167,23 @@ window.startNewBooking = async () => {
   });
   $("lessonPick").innerHTML = "";
   $("toStep2").disabled = true;
+  // 반복 토글 초기화
+  $("recurOn").checked = false;
+  $("recurOptions").classList.add("hide");
+  $("toStep2").textContent = "다음";
+};
+
+// 반복 토글 ON/OFF
+window.toggleRecurOptions = () => {
+  const on = $("recurOn").checked;
+  $("recurOptions").classList.toggle("hide", !on);
+  $("toStep2").textContent = on ? "반복예약 등록" : "다음";
+};
+
+// "다음" 버튼: 반복이면 등록, 아니면 날짜선택으로
+window.step1Next = () => {
+  if ($("recurOn").checked) registerRecurring();
+  else openStep2();
 };
 function pickPro(el) {
   document.querySelectorAll("#proPick .pick-card").forEach(c => c.classList.remove("on"));
@@ -376,22 +396,40 @@ window.openMyBookings = async () => {
 
     if (all.length === 0) {
       box.innerHTML = `<p class="hint">아직 예약 내역이 없어요.</p>`;
-      return;
+    } else {
+      let html = "";
+      if (upcoming.length) {
+        html += `<p class="mini-label">다가오는 예약</p>`;
+        upcoming.forEach(b => { html += bookingCard(b, true); });
+      }
+      if (past.length) {
+        html += `<p class="mini-label" style="margin-top:20px">지난 예약</p>`;
+        past.forEach(b => { html += bookingCard(b, false); });
+      }
+      box.innerHTML = html;
     }
-    let html = "";
-    if (upcoming.length) {
-      html += `<p class="mini-label">다가오는 예약</p>`;
-      upcoming.forEach(b => { html += bookingCard(b, true); });
-    }
-    if (past.length) {
-      html += `<p class="mini-label" style="margin-top:20px">지난 예약</p>`;
-      past.forEach(b => { html += bookingCard(b, false); });
-    }
-    box.innerHTML = html;
+    // 반복예약 패턴 목록 (예약 아래에)
+    await renderMyRecurring(box);
   } catch (e) {
     box.innerHTML = `<p class="hint">목록을 불러오지 못했어요.</p>`;
   }
 };
+
+// 내 반복예약 패턴 — 내 예약 화면 하단에 표시
+async function renderMyRecurring(box) {
+  const snap = await getDocs(query(collection(db, "recurring"), where("memberId", "==", me.uid)));
+  if (snap.empty) return;
+  const W = ["일","월","화","수","목","금","토"];
+  let html = `<p class="mini-label" style="margin-top:24px">🔁 반복예약 패턴</p>`;
+  snap.docs.forEach(d => {
+    const r = d.data();
+    html += `<div class="bk-card"><div class="bk-top">
+      <div><b>${r.proName}</b> · ${r.lessonName}</div>
+      <button class="mini-btn danger" onclick="deleteRecurring('${d.id}')">삭제</button>
+    </div><div class="bk-time">매${r.everyOther ? "격주" : "주"} ${W[r.weekday]} ${r.time}</div></div>`;
+  });
+  box.innerHTML += html;
+}
 
 function bookingCard(b, cancelable) {
   const statusLabel = b.status === "cancelled" ? "취소됨"
@@ -648,6 +686,7 @@ window.createPost = async () => {
   const category = $("pwCategory").value;
   if (!title || !content) return alert("제목과 내용을 입력하세요.");
   const isAdminOrPro = myProfile?.role === "admin" || myProfile?.role === "pro";
+  const btn = $("pwSubmit"); btn.disabled = true; btn.textContent = "등록 중…";
   try {
     await addDoc(collection(db, "posts"), {
       category, title, content,
@@ -658,7 +697,9 @@ window.createPost = async () => {
     });
     $("pwTitle").value = ""; $("pwContent").value = ""; $("pwAnon").checked = false;
     openBoard();
-  } catch (e) { alert("등록 실패: " + e.message); }
+  } catch (e) {
+    alert("등록 실패: " + e.message);
+  } finally { btn.disabled = false; btn.textContent = "등록"; }
 };
 window.deletePost = async (id) => {
   if (!confirm("이 글을 삭제할까요?")) return;
@@ -669,31 +710,13 @@ const esc = (s) => (s || "").replace(/[&<>"]/g, c =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // ============================================================
-// [4-B] 반복예약 — 매주/격주 패턴 등록 → 슬롯 일괄 예약
+// [4-B] 반복예약 — STEP1 토글에서 진입 (별도 화면 폐지)
 // ============================================================
-window.openRecurring = () => {
-  show("recurringView");
-  // 프로 옵션
-  getDocs(query(collection(db, "pros"), where("active", "==", true))).then(ps => {
-    let o = `<option value="">프로 선택</option>`;
-    ps.forEach(d => o += `<option value="${d.id}" data-name="${d.data().name}">${d.data().name}</option>`);
-    $("rcPro").innerHTML = o;
-  });
-  getDocs(query(collection(db, "lessonTypes"), where("active", "==", true))).then(ls => {
-    let o = `<option value="">레슨 선택</option>`;
-    ls.docs.sort((a,b)=>(a.data().order||0)-(b.data().order||0))
-      .forEach(d => o += `<option value="${d.id}" data-name="${d.data().name}">${d.data().name}</option>`);
-    $("rcLesson").innerHTML = o;
-  });
-  loadMyRecurring();
-};
 
-// 반복 패턴 등록: 향후 N주 동안 해당 요일·시간 슬롯을 찾아 예약
+// 반복 패턴 등록: STEP1의 draft(프로·레슨) + 요일·시간으로 향후 N주 예약
 window.registerRecurring = async () => {
-  const proSel = $("rcPro"), lessonSel = $("rcLesson");
-  const proId = proSel.value, lessonTypeId = lessonSel.value;
-  const proName = proSel.selectedOptions[0]?.dataset.name;
-  const lessonName = lessonSel.selectedOptions[0]?.dataset.name;
+  const proId = draft.proId, lessonTypeId = draft.lessonTypeId;
+  const proName = draft.proName, lessonName = draft.lessonName;
   const weekday = parseInt($("rcWeekday").value, 10);   // 0=일 ~ 6=토
   const time = $("rcTime").value;                        // "HH:MM"
   const weeks = parseInt($("rcWeeks").value, 10);        // 몇 주
@@ -742,27 +765,12 @@ window.registerRecurring = async () => {
     } catch { skip++; }
   }
   alert(`반복예약 완료!\n예약 성공: ${ok}건${skip ? ` / 불가(미개설·마감): ${skip}건` : ""}`);
-  loadMyRecurring();
+  show("homeView"); renderHome();
 };
 
-async function loadMyRecurring() {
-  const box = $("rcList");
-  const snap = await getDocs(query(collection(db, "recurring"), where("memberId", "==", me.uid)));
-  if (snap.empty) { box.innerHTML = `<p class="hint sm">등록된 반복예약이 없습니다.</p>`; return; }
-  const W = ["일","월","화","수","목","금","토"];
-  let html = `<p class="mini-label">내 반복예약</p>`;
-  snap.docs.forEach(d => {
-    const r = d.data();
-    html += `<div class="bk-card"><div class="bk-top">
-      <div><b>${r.proName}</b> · ${r.lessonName}</div>
-      <button class="mini-btn danger" onclick="deleteRecurring('${d.id}')">삭제</button>
-    </div><div class="bk-time">매${r.everyOther ? "격주" : "주"} ${W[r.weekday]} ${r.time}</div></div>`;
-  });
-  box.innerHTML = html;
-}
 window.deleteRecurring = async (id) => {
   if (!confirm("이 반복예약 패턴을 삭제할까요? (이미 잡힌 예약은 내 예약에서 개별 취소하세요)")) return;
-  await deleteDoc(doc(db, "recurring", id)); loadMyRecurring();
+  await deleteDoc(doc(db, "recurring", id)); openMyBookings();
 };
 
 // ============================================================

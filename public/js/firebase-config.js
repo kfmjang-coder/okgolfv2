@@ -5,6 +5,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
 import { getAuth } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
 import { getFirestore } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+import { getStorage } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-storage.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDttSjz65eRq8bNXyPjOyUq03Atv_7R9po",
@@ -19,10 +20,11 @@ const firebaseConfig = {
 // 설정 여부 자동 감지 (미설정 시 데모 안내 표시)
 export const isConfigured = !firebaseConfig.apiKey.startsWith("YOUR_");
 
-let auth = null, db = null;
+let auth = null, db = null, storage = null;
 if (isConfigured) {
   const app = initializeApp(firebaseConfig);
   auth = getAuth(app);
   db = getFirestore(app);
+  storage = getStorage(app);
 }
-export { auth, db };
+export { auth, db, storage };

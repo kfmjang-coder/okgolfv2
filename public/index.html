@@ -123,6 +123,7 @@
   .post-title{font-size:16px;font-weight:700;margin-bottom:6px}
   .post-body{font-size:14px;color:#cfe6d4;white-space:pre-wrap;line-height:1.5}
   .post-meta{font-size:12px;color:var(--mut);margin-top:10px}
+  .recur-toggle{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:18px 0;font-size:15px}
   .authed-only{display:none}
   body.authed .authed-only{display:flex}
   /* 내 예약 카드 */
@@ -177,7 +178,7 @@
     </div>
     <div class="field"><label>이메일</label><input id="email" type="email" placeholder="you@email.com"></div>
     <div class="field"><label>비밀번호</label><input id="password" type="password" placeholder="6자 이상"></div>
-    <button class="btn-primary" onclick="if($('signupFields').classList.contains('hide'))login();else signup()">계속</button>
+    <button class="btn-primary" onclick="submitAuth()">계속</button>
     <button class="btn-ghost btn-google" onclick="googleLogin()">Google로 계속하기</button>
     <button class="btn-ghost" onclick="toggleAuth()">로그인 / 회원가입 전환</button>
   </section>
@@ -197,7 +198,25 @@
     <div id="proPick"></div>
     <p class="mini-label">레슨 종류</p>
     <div id="lessonPick"></div>
-    <button id="toStep2" class="btn-primary" onclick="openStep2()" disabled>다음</button>
+
+    <div class="recur-toggle">
+      <label style="display:flex;align-items:center;justify-content:space-between;cursor:pointer">
+        <span>🔁 반복 예약으로 등록</span>
+        <input type="checkbox" id="recurOn" onchange="toggleRecurOptions()" style="width:auto;margin:0;transform:scale(1.3)">
+      </label>
+      <div id="recurOptions" class="hide" style="margin-top:14px">
+        <p class="sub" style="margin-bottom:10px">선택한 프로·레슨으로 매주 같은 요일·시간에 자동 예약합니다.</p>
+        <div class="field"><label>요일</label>
+          <select id="rcWeekday"><option value="1">월</option><option value="2">화</option><option value="3">수</option><option value="4">목</option><option value="5">금</option><option value="6">토</option><option value="0">일</option></select></div>
+        <div class="field"><label>시간</label><input id="rcTime" type="time" step="1200"></div>
+        <div class="field"><label>반복</label>
+          <select id="rcEvery"><option value="1">매주</option><option value="2">격주</option></select></div>
+        <div class="field"><label>기간</label>
+          <select id="rcWeeks"><option value="4">4주</option><option value="8">8주</option><option value="12">12주</option></select></div>
+      </div>
+    </div>
+
+    <button id="toStep2" class="btn-primary" onclick="step1Next()" disabled>다음</button>
   </section>
 
   <!-- STEP2: 날짜+슬롯접기 -->
@@ -268,24 +287,7 @@
     <div class="field"><label>내용</label><textarea id="pwContent" rows="5"></textarea></div>
     <label style="display:flex;align-items:center;gap:8px;margin:8px 0"><input type="checkbox" id="pwAnon" style="width:auto;margin:0"> 익명으로</label>
     <label class="admin-only" style="display:flex;align-items:center;gap:8px;margin:8px 0"><input type="checkbox" id="pwPin" style="width:auto;margin:0"> 공지 상단 고정</label>
-    <button class="btn-primary" onclick="createPost()">등록</button>
-  </section>
-
-  <!-- 반복예약 -->
-  <section id="recurringView" class="view">
-    <h2>반복예약</h2>
-    <p class="desc">매주 같은 시간에 자동으로 예약을 잡습니다.</p>
-    <div class="field"><label>프로</label><select id="rcPro"></select></div>
-    <div class="field"><label>레슨</label><select id="rcLesson"></select></div>
-    <div class="field"><label>요일</label>
-      <select id="rcWeekday"><option value="1">월</option><option value="2">화</option><option value="3">수</option><option value="4">목</option><option value="5">금</option><option value="6">토</option><option value="0">일</option></select></div>
-    <div class="field"><label>시간 (예: 19:00)</label><input id="rcTime" type="time" step="1200"></div>
-    <div class="field"><label>반복</label>
-      <select id="rcEvery"><option value="1">매주</option><option value="2">격주</option></select></div>
-    <div class="field"><label>기간 (주)</label>
-      <select id="rcWeeks"><option value="4">4주</option><option value="8">8주</option><option value="12">12주</option></select></div>
-    <button class="btn-primary" onclick="registerRecurring()">반복예약 등록</button>
-    <div id="rcList" style="margin-top:20px"></div>
+    <button class="btn-primary" id="pwSubmit" onclick="createPost()">등록</button>
   </section>
 
   <!-- 수강권 -->
@@ -298,7 +300,6 @@
 <nav class="authed-only">
   <button class="on" onclick="show('homeView');renderHomeSafe();setTab(this)">예약</button>
   <button onclick="openMyBookings();setTab(this)">내 예약</button>
-  <button onclick="openRecurring();setTab(this)">반복</button>
   <button onclick="openPasses();setTab(this)">이용권</button>
   <button onclick="openBoard();setTab(this)">게시판</button>
   <button class="admin-only" onclick="openAdmin();setTab(this)">관리</button>
