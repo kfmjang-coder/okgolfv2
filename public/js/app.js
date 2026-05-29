@@ -259,6 +259,7 @@ const fmtDate = (s) => {
 
 // 단골 1탭 → 그 예약에 쓴 이용권을 자동 선택해 STEP2로 점프
 window.quickRebook = async (b) => {
+  resetNlSearch();
   if (!b.passId) { alert("이 예약과 연결된 이용권을 찾을 수 없어요. 새 예약으로 진행하세요."); return startNewBooking(); }
   // 이용권 유효성 확인
   const ps = await getDoc(doc(db, "passes", b.passId));
@@ -282,6 +283,7 @@ let rebookHint = null;  // {date, time} — STEP2 진입 시 추천 안내·자�
 
 // ---------- 신규 예약: 이용권 선택 → STEP2 ----------
 window.startNewBooking = async () => {
+  resetNlSearch();
   show("step1View");
   const box = $("passPick");
   box.innerHTML = `<p class="hint">불러오는 중…</p>`;
@@ -320,6 +322,7 @@ window.pickPassForBooking = (passId, passOrJson) => {
 
 // ---------- 반복 예약: 전용 화면 ----------
 window.startRecurring = async () => {
+  resetNlSearch();
   show("recurringView");
   const box = $("recurPassPick");
   $("recurForm").classList.add("hide");
@@ -649,6 +652,7 @@ function showDone() {
 let myBookingsCache = [];   // 달력뷰에서 재사용
 let myCalCursor = null;     // 내 예약 달력이 보는 달
 window.openMyBookings = async () => {
+  resetNlSearch();
   show("myView");
   const box = $("myList");
   box.innerHTML = `<p class="hint">불러오는 중…</p>`;
@@ -860,7 +864,7 @@ window.cancelBooking = async (bookingId, slotId, date, time) => {
 // [3번] 관리자 콘솔 — 현황 / 슬롯 / 프로·레슨
 // admin role 전용. 보안 규칙이 실제 권한을 강제함.
 // ============================================================
-window.openAdmin = () => { show("adminView"); adminTab("status"); };
+window.openAdmin = () => { resetNlSearch(); show("adminView"); adminTab("status"); };
 
 window.adminTab = (tab) => {
   document.querySelectorAll("#adminTabs button").forEach(b =>
@@ -1395,7 +1399,7 @@ window.deleteLesson = async (id, name) => {
 // [4-A] 게시판 — 공지/자유/질문, 작성·삭제, 댓글
 // ============================================================
 let boardCategory = "all";
-window.openBoard = () => { show("boardView"); boardCategory = "all"; setBoardFilter("all"); };
+window.openBoard = () => { resetNlSearch(); show("boardView"); boardCategory = "all"; setBoardFilter("all"); };
 
 window.setBoardFilter = (cat) => {
   boardCategory = cat;
