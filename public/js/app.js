@@ -30,6 +30,28 @@ const show = (id, opts = {}) => {
   }
 };
 window.show = show;
+
+// 토스트 알림 (3초 후 자동 사라짐)
+window.toast = (msg) => {
+  const t = $("toast"); if (!t) return;
+  t.textContent = msg;
+  t.classList.remove("hide");
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(() => t.classList.add("hide"), 3000);
+};
+
+window.finishBooking = () => {
+  resetNlSearch();
+  show("homeView");
+  renderHomeSafe();
+  toast("✅ 예약이 완료됐어요");
+};
+
+// 자연어 검색 초기화 (예약 완료 시)
+window.resetNlSearch = () => {
+  const q = $("nlQuery"); if (q) q.value = "";
+  const r = $("nlResult"); if (r) r.innerHTML = "";
+};
 // 폰/브라우저 뒤로가기 → 이전 화면으로
 window.addEventListener("popstate", (e) => {
   const target = e.state?.view || "homeView";

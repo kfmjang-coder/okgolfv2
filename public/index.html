@@ -227,6 +227,11 @@
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}
   .modal.hide{display:none}
   .modal-card{background:var(--bg2);border:1px solid var(--line);border-radius:16px;padding:20px;width:100%;max-width:380px;max-height:90vh;overflow-y:auto}
+  .toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:var(--accent);
+    color:var(--accent-d);padding:12px 20px;border-radius:999px;font-weight:700;font-size:15px;
+    box-shadow:0 4px 16px rgba(0,0,0,.4);z-index:2000;transition:opacity .3s,transform .3s;
+    max-width:90vw;text-align:center}
+  .toast.hide{opacity:0;transform:translateX(-50%) translateY(20px);pointer-events:none}
   .pass-card{background:var(--card);border:1px solid var(--accent2);border-left:4px solid var(--accent);
     border-radius:14px;padding:14px 16px;margin-bottom:8px}
   .pass-card .pass-rem{margin-top:6px;font-size:15px}
@@ -362,7 +367,7 @@
   <section id="doneView" class="view">
     <div class="cf-box" id="doneCard" style="text-align:center"></div>
     <a id="calBtn" class="btn-ghost" style="display:block;text-align:center;text-decoration:none;line-height:1.4" target="_blank">📅 캘린더에 추가</a>
-    <button class="btn-primary" onclick="show('homeView');renderHomeSafe()">홈으로</button>
+    <button class="btn-primary" onclick="finishBooking()">홈으로</button>
   </section>
 
   <!-- 내 예약 목록 -->
@@ -393,6 +398,9 @@
     <button class="btn-primary" onclick="saveProEdit()">저장</button>
     <button class="btn-ghost danger" onclick="deletePro()" style="margin-top:10px">이 프로 삭제</button>
   </section>
+
+  <!-- 토스트 알림 -->
+  <div id="toast" class="toast hide"></div>
 
   <!-- 수강권 발급 모달 -->
   <div id="passModal" class="modal hide">
