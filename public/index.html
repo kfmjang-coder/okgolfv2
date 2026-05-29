@@ -32,25 +32,25 @@
   .logo{font-family:'Bebas Neue';font-size:28px;letter-spacing:1px;color:var(--accent)}
   .logo span{color:var(--ink)}
   .nav-user{font-size:13px;color:var(--mut)}
-  .wrap{max-width:480px;margin:0 auto;padding:20px 16px 40px}
+  .wrap{max-width:480px;margin:0 auto;padding:20px 16px 90px}
   .view{display:none;animation:fade .35s ease}
   .view.active{display:block}
   @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
   h2{font-family:'Bebas Neue';font-size:32px;letter-spacing:1px;margin-bottom:4px}
-  h3{font-size:18px;margin:14px 0 8px}
-  .sub{color:var(--mut);font-size:13px}
-  .desc{color:var(--mut);font-size:14px;margin-bottom:20px}
-  .mini-label{font-size:13px;color:var(--mut);margin:18px 0 8px}
-  input,textarea,select{width:100%;padding:13px 14px;border-radius:12px;border:1px solid var(--line);
-    background:var(--bg2);color:var(--ink);font-size:15px;font-family:inherit;margin-top:6px}
+  h3{font-size:19px;margin:14px 0 8px}
+  .sub{color:var(--mut);font-size:14px}
+  .desc{color:var(--mut);font-size:15px;margin-bottom:20px}
+  .mini-label{font-size:14px;color:var(--mut);margin:18px 0 8px}
+  input,textarea,select{width:100%;padding:14px 14px;border-radius:12px;border:1px solid var(--line);
+    background:var(--bg2);color:var(--ink);font-size:16px;font-family:inherit;margin-top:6px;min-height:48px}
   input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent)}
-  label{font-size:13px;color:var(--mut)}
-  .btn-primary{width:100%;padding:15px;border:none;border-radius:12px;background:var(--accent);
-    color:var(--accent-d);font-weight:800;font-size:16px;cursor:pointer;margin-top:14px;transition:transform .1s}
+  label{font-size:14px;color:var(--mut)}
+  .btn-primary{width:100%;padding:16px;border:none;border-radius:12px;background:var(--accent);
+    color:var(--accent-d);font-weight:800;font-size:17px;cursor:pointer;margin-top:14px;transition:transform .1s;min-height:50px}
   .btn-primary:active{transform:scale(.98)}
   .btn-primary:disabled{background:var(--off);color:var(--mut);cursor:not-allowed}
-  .btn-ghost{width:100%;padding:14px;border:1px solid var(--line);border-radius:12px;
-    background:transparent;color:var(--ink);font-size:15px;cursor:pointer;margin-top:10px;font-family:inherit}
+  .btn-ghost{width:100%;padding:15px;border:1px solid var(--line);border-radius:12px;
+    background:transparent;color:var(--ink);font-size:16px;cursor:pointer;margin-top:10px;font-family:inherit;min-height:48px}
   .btn-google{background:#fff;color:#222;border:none}
   .hide{display:none}
   /* 카드류 */
@@ -98,12 +98,12 @@
   .zone.expanded .zone-cnt{color:var(--accent2)}
   .zone-body{display:none;padding:0 16px 16px;grid-template-columns:repeat(3,1fr);gap:8px}
   .zone.expanded .zone-body{display:grid}
-  .slot{padding:11px 0;border-radius:10px;border:none;font-size:14px;font-weight:500;cursor:pointer;
+  .slot{padding:13px 0;border-radius:10px;border:none;font-size:15px;font-weight:500;cursor:pointer;
     background:var(--accent2);color:var(--accent-d);font-family:inherit}
   .slot.off{background:var(--bg2);color:var(--mut);text-decoration:line-through;cursor:not-allowed}
   /* 확정 */
   .cf-box{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px}
-  .cf-row{display:flex;justify-content:space-between;padding:7px 0;font-size:14px}
+  .cf-row{display:flex;justify-content:space-between;padding:9px 0;font-size:15px}
   .cf-row span{color:var(--mut)}
   .field{margin-bottom:12px}
   /* 완료 */
@@ -117,16 +117,16 @@
   .back{background:none;border:none;color:var(--mut);font-size:22px;cursor:pointer;padding:0 4px}
   nav{position:fixed;bottom:0;left:0;right:0;display:flex;border-top:1px solid var(--line);
     background:rgba(10,31,20,.95);backdrop-filter:blur(10px);max-width:480px;margin:0 auto}
-  nav button{flex:1;padding:11px 2px;background:none;border:none;color:var(--mut);font-size:11px;
-    cursor:pointer;font-family:inherit;white-space:nowrap}
+  nav button{flex:1;padding:13px 2px;background:none;border:none;color:var(--mut);font-size:13px;
+    cursor:pointer;font-family:inherit;white-space:nowrap;min-height:54px}
   nav button.on{color:var(--accent);font-weight:700}
   /* 게시판 */
   .post-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:10px}
   .post-card.pinned{border-color:var(--accent);background:#16401f}
   .post-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
   .post-cat{font-size:12px;color:var(--accent2);background:var(--bg2);padding:3px 10px;border-radius:999px}
-  .post-title{font-size:16px;font-weight:700;margin-bottom:6px}
-  .post-body{font-size:14px;color:#cfe6d4;white-space:pre-wrap;line-height:1.5}
+  .post-title{font-size:17px;font-weight:700;margin-bottom:6px}
+  .post-body{font-size:15px;color:#cfe6d4;white-space:pre-wrap;line-height:1.55}
   .post-meta{font-size:12px;color:var(--mut);margin-top:10px}
   .post-actions{display:flex;gap:10px;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
   .like-btn,.cmt-toggle{background:transparent;border:1px solid var(--line);border-radius:999px;
@@ -149,7 +149,7 @@
   .bk-card.dim{opacity:.5}
   .bk-top{display:flex;justify-content:space-between;align-items:center;font-size:15px}
   .bk-badge{font-size:12px;color:var(--mut);background:var(--bg2);padding:3px 10px;border-radius:999px}
-  .bk-time{color:var(--accent);font-size:14px;font-weight:700;margin-top:6px}
+  .bk-time{color:var(--accent);font-size:15px;font-weight:700;margin-top:6px}
   .cancel-btn{margin-top:12px;width:100%;padding:11px;border:1px solid #6b2b2b;border-radius:10px;
     background:transparent;color:#ff9b9b;font-size:14px;cursor:pointer;font-family:inherit}
   .cancel-btn:active{background:#3a1a1a}
@@ -222,8 +222,8 @@
   .star{cursor:pointer;color:var(--accent)}
   .star:active{transform:scale(1.2)}
   .rating-done{margin-top:10px;color:var(--accent);font-size:15px;text-align:center}
-  .mini-btn{padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);
-    color:var(--ink);font-size:13px;cursor:pointer;font-family:inherit}
+  .mini-btn{padding:9px 14px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);
+    color:var(--ink);font-size:14px;cursor:pointer;font-family:inherit;min-height:38px}
   .mini-btn.danger{color:#ff9b9b;border-color:#6b2b2b}
 </style>
 </head>
@@ -406,17 +406,12 @@
     <button class="btn-primary" id="pwSubmit" onclick="createPost()">등록</button>
   </section>
 
-  <!-- 수강권 -->
-  <section id="passView" class="view">
-    <h2>이용권</h2>
-    <div id="passList" style="margin-top:14px"></div>
-  </section>
+  <!-- (이용권 화면은 홈에 통합되어 제거됨) -->
 </div>
 
 <nav class="authed-only">
   <button class="on" onclick="show('homeView');renderHomeSafe();setTab(this)">예약</button>
   <button onclick="openMyBookings();setTab(this)">내 예약</button>
-  <button onclick="openPasses();setTab(this)">이용권</button>
   <button onclick="openBoard();setTab(this)">게시판</button>
   <button class="admin-only" onclick="openAdmin();setTab(this)">관리</button>
   <button onclick="logout()">로그아웃</button>

@@ -14,7 +14,7 @@ import {
 
 const $ = (id) => document.getElementById(id);
 // 메인 탭(폰 뒤로가기로 빠져나가도 되는 화면)
-const MAIN_VIEWS = new Set(["homeView","myView","passesView","boardView","adminView","authView","loadingView"]);
+const MAIN_VIEWS = new Set(["homeView","myView","boardView","adminView","authView","loadingView"]);
 const show = (id, opts = {}) => {
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === id));
   window.scrollTo(0, 0);
@@ -1553,31 +1553,8 @@ window.deleteRecurring = async (id) => {
 // ============================================================
 // [4-C] 수강권 — 보유 현황 (발급은 관리자, 차감은 예약 시)
 // ============================================================
-window.openPasses = async () => {
-  show("passView");
-  const box = $("passList");
-  box.innerHTML = `<p class="hint">불러오는 중…</p>`;
-  const snap = await getDocs(query(collection(db, "passes"), where("memberId", "==", me.uid)));
-  if (snap.empty) { box.innerHTML = `<p class="hint">보유한 수강권이 없습니다.<br>관리자에게 발급을 요청하세요.</p>`; return; }
-  const list = snap.docs.map(d => d.data());
-  const active = list.filter(p => (p.remaining || 0) > 0);
-  const used = list.filter(p => (p.remaining || 0) <= 0);
-  let html = `<p class="mini-label">사용 가능</p>`;
-  if (!active.length) html += `<p class="hint sm">사용 가능한 수강권이 없습니다.</p>`;
-  active.forEach(p => {
-    html += `<div class="bk-card"><div class="bk-top">
-      <div><b>${p.lessonName || "수강권"}</b></div>
-      <span class="bk-badge" style="color:var(--accent)">${p.remaining}/${p.total}회</span></div>
-      <div class="sub">만료: ${p.expireAt || "-"}</div></div>`;
-  });
-  if (used.length) {
-    html += `<p class="mini-label" style="margin-top:18px">소진됨</p>`;
-    used.forEach(p => html += `<div class="bk-card dim"><b>${p.lessonName || "수강권"}</b> · 0/${p.total}회</div>`);
-  }
-  box.innerHTML = html;
-};
+// (openPasses 함수는 이용권 탭 제거로 삭제됨 — 이용권은 홈에 통합)
 
-// 관리자: 수강권 발급
 // ---------- 회원 관리 ----------
 let allMembers = [];
 async function renderAdminMembers() {
