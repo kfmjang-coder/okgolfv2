@@ -208,31 +208,26 @@ async function renderHome() {
     } else { pb.innerHTML = ""; }
   } catch { pb.innerHTML = ""; }
 
-  // 단골 1탭: 최근 완료/예약 1건 기준 추천
-  const rb = $("rebookBox");
+  // 제안 카드: 가장 최근 예약과 같은 조건으로 빠른 예약 권유
+  const sb = $("suggestBox");
   try {
     const rs = await getDocs(query(collection(db, "bookings"),
       where("memberId", "==", me.uid)));
     const sorted = rs.docs
       .map(d => d.data())
-      .filter(b => b.createdAt)
+      .filter(b => b.createdAt && b.passId)
       .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
     if (sorted.length > 0) {
       const b = sorted[0];
-      rb.innerHTML = `<p class="mini-label">다시 예약하기</p>
-        <div class="rebook-card">
-          <div class="rebook-head">
-            <div class="avatar">${b.proName.slice(0,2)}</div>
-            <div><b>${b.proName} · ${b.lessonName}</b>
-              <div class="sub">최근 예약 패턴으로 빠르게</div></div>
-          </div>
-          <button class="btn-primary" onclick='quickRebook(${JSON.stringify(b).replace(/'/g,"&#39;")})'>
-            ↻ 지난 예약과 동일 조건으로</button>
-        </div>`;
-    } else {
-      rb.innerHTML = `<p class="mini-label">첫 예약을 시작해보세요</p>`;
-    }
-  } catch { rb.innerHTML = ""; }
+      const W = ["일","월","화","수","목","금","토"];
+      const d = new Date(b.date);
+      const dow = W[d.getDay()];
+      sb.innerHTML = `<div class="suggest-card">
+        <span>💡 지난번처럼 <b>${dow}요일 ${b.time}</b>?</span>
+        <button class="suggest-btn" onclick='quickRebook(${JSON.stringify(b).replace(/'/g,"&#39;")})'>바로 예약</button>
+      </div>`;
+    } else { sb.innerHTML = ""; }
+  } catch { sb.innerHTML = ""; }
 }
 window.renderHome = renderHome;
 const fmtDate = (s) => {
@@ -253,92 +248,107 @@ window.quickRebook = async (b) => {
   openStep2();
 };
 
-// ---------- 신규 예약 STEP1: 내 이용권 선택 ----------
+// ---------- 신규 예약: 이용권 선택 → STEP2 ----------
 window.startNewBooking = async () => {
   show("step1View");
   const box = $("passPick");
   box.innerHTML = `<p class="hint">불러오는 중…</p>`;
-  // 내 이용권 중 잔여>0, 만료 안 됨
-  const today = new Date().toISOString().slice(0, 10);
-  const snap = await getDocs(query(collection(db, "passes"), where("memberId", "==", me.uid)));
-  const usable = snap.docs
-    .map(d => ({ id: d.id, ...d.data() }))
-    .filter(p => (p.remaining || 0) > 0 && (!p.expireAt || p.expireAt >= today));
-
-  // 반복 토글 초기화
-  $("recurOn").checked = false;
-  $("recurOptions").classList.add("hide");
-  $("recurToggleBox").style.display = "none";
   $("toStep2").style.display = "none";
   $("toStep2").disabled = true;
-  $("toStep2").textContent = "다음";
   draft = { proId: null, proName: null, lessonTypeId: null, lessonName: null,
             passId: null, date: null, time: null, slotId: null, people: 1 };
   draftWorkHours = null;
 
-  if (usable.length === 0) {
-    box.innerHTML = `<div class="bk-card" style="text-align:center;padding:24px">
-      <div style="font-size:32px;margin-bottom:8px">🎫</div>
-      <b>예약 가능한 이용권이 없습니다</b>
-      <div class="sub" style="margin-top:8px">예약하려면 매장에서 이용권을 발급받으세요.</div>
-    </div>`;
-    return;
-  }
+  const usable = await getUsablePasses();
+  if (usable.length === 0) { box.innerHTML = noPassCard(); return; }
 
-  // 이용권 1장이면 자동 선택 → 바로 STEP2
   if (usable.length === 1) {
     pickPassForBooking(usable[0].id, usable[0]);
     openStep2();
     return;
   }
-
-  // 여러 장: 카드 목록에서 선택
-  let html = "";
-  usable.forEach(p => {
-    html += `<button class="pick-card pass-pick" onclick="pickPassForBooking('${p.id}', ${JSON.stringify(p).replace(/"/g,'&quot;')})">
-      <div style="flex:1;text-align:left">
-        <b>${esc(p.proName || "")}</b> · ${esc(p.lessonName || "")}
-        <div class="sub" style="margin-top:4px">잔여 <b style="color:var(--accent)">${p.remaining}</b>/${p.total}회${p.expireAt?` · 만료 ${p.expireAt}`:""}</div>
-      </div>
-      <span class="chev">›</span>
-    </button>`;
-  });
-  box.innerHTML = html;
+  box.innerHTML = usable.map(p => passPickCardHTML(p, "pickPassForBooking")).join("");
 };
 
-// 이용권 선택 → draft에 정보 박고 반복토글·다음버튼 활성화
 window.pickPassForBooking = (passId, passOrJson) => {
   const p = typeof passOrJson === "string" ? JSON.parse(passOrJson.replace(/&quot;/g,'"')) : passOrJson;
   draft.passId = passId;
   draft.proId = p.proId; draft.proName = p.proName;
   draft.lessonTypeId = p.lessonTypeId; draft.lessonName = p.lessonName;
-  // 운영시간 가져오기 (반복예약 시간 옵션용)
   getDoc(doc(db, "pros", p.proId)).then(s => {
     if (s.exists()) draftWorkHours = s.data().workHours || null;
   });
-  // 선택 표시
-  document.querySelectorAll("#passPick .pick-card").forEach(c => c.classList.remove("on"));
-  if (event && event.currentTarget) event.currentTarget.classList.add("on");
-  // 반복 토글·다음 버튼 노출
-  $("recurToggleBox").style.display = "block";
-  $("toStep2").style.display = "block";
-  $("toStep2").disabled = false;
-};
-
-// 반복 토글 ON/OFF
-window.toggleRecurOptions = () => {
-  const on = $("recurOn").checked;
-  $("recurOptions").classList.toggle("hide", !on);
-  $("toStep2").textContent = on ? "반복예약 등록" : "다음";
-  if (on) {
-    fillRecurTimeOptions();
-    // 반복 모드: 프로·레슨이 선택돼 있으면 버튼 활성화 (날짜 불필요)
-    if (draft.proId && draft.lessonTypeId) $("toStep2").disabled = false;
-  } else {
-    // 1회 모드로 돌아오면 레슨 선택 여부에 따라
-    $("toStep2").disabled = !(draft.proId && draft.lessonTypeId);
+  if (document.querySelectorAll("#passPick .pick-card").length > 1) {
+    document.querySelectorAll("#passPick .pick-card").forEach(c => c.classList.remove("on"));
+    if (event && event.currentTarget) event.currentTarget.classList.add("on");
+    $("toStep2").style.display = "block";
+    $("toStep2").disabled = false;
   }
 };
+
+// ---------- 반복 예약: 전용 화면 ----------
+window.startRecurring = async () => {
+  show("recurringView");
+  const box = $("recurPassPick");
+  $("recurForm").classList.add("hide");
+  box.innerHTML = `<p class="hint">불러오는 중…</p>`;
+  draft = { proId: null, proName: null, lessonTypeId: null, lessonName: null,
+            passId: null, date: null, time: null, slotId: null, people: 1 };
+  draftWorkHours = null;
+
+  const usable = await getUsablePasses();
+  if (usable.length === 0) { box.innerHTML = noPassCard(); return; }
+
+  if (usable.length === 1) {
+    pickPassForRecurring(usable[0].id, usable[0], true);
+    return;
+  }
+  box.innerHTML = `<p class="sub" style="margin-bottom:8px">반복 예약에 사용할 이용권을 선택하세요.</p>`
+    + usable.map(p => passPickCardHTML(p, "pickPassForRecurring")).join("");
+};
+
+window.pickPassForRecurring = (passId, passOrJson, autoOnly) => {
+  const p = typeof passOrJson === "string" ? JSON.parse(passOrJson.replace(/&quot;/g,'"')) : passOrJson;
+  draft.passId = passId;
+  draft.proId = p.proId; draft.proName = p.proName;
+  draft.lessonTypeId = p.lessonTypeId; draft.lessonName = p.lessonName;
+  getDoc(doc(db, "pros", p.proId)).then(s => {
+    if (s.exists()) draftWorkHours = s.data().workHours || null;
+    fillRecurTimeOptions();
+  });
+  // 선택된 이용권을 요약 카드 하나로만 표시
+  $("recurPassPick").innerHTML = `<p class="sub" style="margin-bottom:8px">사용할 이용권</p>
+    <div class="bk-card" style="background:var(--card);border-left:4px solid var(--accent)">
+      <b>${esc(p.proName || "")}</b> · ${esc(p.lessonName || "")}
+      <div class="sub" style="margin-top:4px">잔여 <b style="color:var(--accent)">${p.remaining}</b>/${p.total}회</div>
+    </div>`;
+  $("recurForm").classList.remove("hide");
+};
+
+// ---------- 이용권 헬퍼 ----------
+async function getUsablePasses() {
+  const today = new Date().toISOString().slice(0, 10);
+  const snap = await getDocs(query(collection(db, "passes"), where("memberId", "==", me.uid)));
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(p => (p.remaining || 0) > 0 && (!p.expireAt || p.expireAt >= today));
+}
+function passPickCardHTML(p, onclickFn) {
+  return `<button class="pick-card pass-pick" onclick="${onclickFn}('${p.id}', ${JSON.stringify(p).replace(/"/g,'&quot;')})">
+    <div style="flex:1;text-align:left">
+      <b>${esc(p.proName || "")}</b> · ${esc(p.lessonName || "")}
+      <div class="sub" style="margin-top:4px">잔여 <b style="color:var(--accent)">${p.remaining}</b>/${p.total}회${p.expireAt?` · 만료 ${p.expireAt}`:""}</div>
+    </div>
+    <span class="chev">›</span>
+  </button>`;
+}
+function noPassCard() {
+  return `<div class="bk-card" style="text-align:center;padding:24px">
+    <div style="font-size:32px;margin-bottom:8px">🎫</div>
+    <b>예약 가능한 이용권이 없습니다</b>
+    <div class="sub" style="margin-top:8px">예약하려면 매장에서 이용권을 발급받으세요.</div>
+  </div>`;
+}
 
 // 선택한 프로의 운영시간 범위로 20분 단위 시간 옵션 채우기
 function fillRecurTimeOptions() {
@@ -353,20 +363,6 @@ function fillRecurTimeOptions() {
   sel.innerHTML = o;
 }
 
-// "다음" 버튼: 반복이면 등록, 아니면 날짜선택으로
-window.step1Next = () => {
-  if ($("recurOn").checked) {
-    if (!draft.proId || !draft.lessonTypeId) {
-      return alert("프로와 레슨을 먼저 선택해주세요.");
-    }
-    // 시간 옵션이 비어있으면 채우고 막음
-    if (!$("rcTime").value) {
-      fillRecurTimeOptions();
-      if (!$("rcTime").value) return alert("시간 목록을 불러오지 못했어요. 프로를 다시 선택해주세요.");
-    }
-    registerRecurring();
-  } else openStep2();
-};
 window.openStep2 = openStep2;
 function openStep2() {
   show("step2View");
@@ -1164,6 +1160,12 @@ async function renderAdminManage() {
         <option value="3">3회 누적 시 차단</option>
         <option value="5">5회 누적 시 차단</option>
       </select>
+      <label class="sub" style="display:block;margin-top:12px">기본 테마 (신규 회원)</label>
+      <select id="themeInput" style="margin-top:4px">
+        <option value="dark">🌙 다크 모드</option>
+        <option value="light">☀️ 라이트 모드</option>
+      </select>
+      <div class="sub" style="margin-top:4px;font-size:12px">개별 회원은 상단 🌙/☀️ 버튼으로 직접 바꿀 수 있습니다.</div>
       <button class="mini-btn" onclick="saveStoreSettings()" style="margin-top:12px;width:100%">전체 설정 저장</button>
     </div>
     <p class="mini-label" style="margin-top:20px">프로</p>`;
