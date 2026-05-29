@@ -2041,42 +2041,45 @@ window.issuePass = async () => {
 // ============================================================
 
 // 파서: 자연어 문자열 → { dateRange: [from, to], timeRange: [startH, endH] }
-// 입력의 "예약 의도"를 점검 — 'booking' | 'other' | 'ambiguous'
-// booking: 명확한 예약 의도 (날짜·시간 키워드 있음)
-// other: 명백한 무관 질문 (제외 키워드)
-// ambiguous: 둘 다 아님 → AI에게 판단 위임
+// 입력의 "예약 의도"를 점검 — 'booking' | 'other'
+// 화이트리스트 방식: 날짜·시간·예약 관련 신호가 하나라도 있어야 booking으로 인정.
+// 없으면 무관 질문으로 간주 (이란, 전쟁, 트럼프, 주식 등 자동 차단)
 function classifyIntent(text) {
   const s = text.trim().toLowerCase();
-  // 1. 너무 짧거나 의미없는 입력
+  // 너무 짧거나 의미없는 입력
   if (s.length < 2) return "other";
   if (/^[ㅋㅎ?!.,~\s]+$/.test(s)) return "other";
 
-  // 2. 명백한 무관 키워드
-  const otherKeywords = [
+  // 예약 의도 필수 신호 — 하나라도 있어야 통과
+  const signals = [
+    // 시간 표현
+    /오늘/, /내일/, /모레/, /주말/, /평일/,
+    /다음\s*주/, /이번\s*주/, /담\s*주/,
+    // 요일
+    /[월화수목금토일]요일/, /\s[월화수목금토일](\s|$)/, /^[월화수목금토일](\s|$)/,
+    // 시간대
+    /아침/, /오전/, /점심/, /낮/, /오후/, /저녁/, /밤/, /야간/, /새벽/,
+    // 명시적 시각
+    /\d{1,2}\s*시/, /\d{1,2}:\d{2}/, /\d{1,2}\/\d{1,2}/,
+    // 날짜
+    /\d{1,2}\s*월\s*\d{1,2}\s*일/,
+    // 예약 관련 키워드
+    /예약/, /레슨/, /연습/, /슬롯/, /빈\s*시간/, /가능한/, /비어/
+  ];
+  const hasSignal = signals.some(re => re.test(s));
+  if (!hasSignal) return "other";
+
+  // 예약 신호가 있어도, 명백히 다른 주제 키워드가 같이 있으면 거절
+  // (예: "오늘 날씨", "내일 환율")
+  const offTopic = [
     "날씨","기온","비와","눈와","태풍",
-    "몇살","나이","생일","주소","전화번호","이메일",
     "환율","주가","뉴스","주식","코인","비트",
     "맛집","음식","레시피","요리","배달",
-    "영화","드라마","노래","음악",
-    "축구","야구","농구","경기","승부",
-    "대통령","총리","트럼프","바이든","정치",
-    "이름이 뭐","넌 누구","너는 누구","너 누구","뭐 할 줄"
+    "영화","드라마","노래","음악","경기","승부"
   ];
-  if (otherKeywords.some(k => s.includes(k))) return "other";
+  if (offTopic.some(k => s.includes(k))) return "other";
 
-  // 3. 예약 관련 신호 단어 (있으면 booking 쪽으로 강화)
-  const bookingSignals = [
-    "예약","레슨","연습","골프","프로","수강","이용권","슬롯","시간","비어","빈","가능",
-    "오늘","내일","모레","주말","오전","오후","저녁","아침","점심","밤","새벽",
-    "월","화","수","목","금","토","일",
-    "시"  // "14시"
-  ];
-  const hasBookingSignal = bookingSignals.some(k => s.includes(k));
-  // 숫자(날짜·시간 패턴)도 신호
-  const hasNumber = /\d/.test(s);
-
-  if (hasBookingSignal || hasNumber) return "booking";
-  return "ambiguous";
+  return "booking";
 }
 
 function parseNaturalQuery(text) {
