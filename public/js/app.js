@@ -1928,25 +1928,36 @@ window.nlSearch = async () => {
 
   // 이용권별로 슬롯 검색해서 합치기
   let candidates = [];
-  for (const pass of usable) {
-    // 해당 프로의 그 기간 슬롯 조회
-    const ss = await getDocs(query(collection(db, "slots"),
-      where("proId", "==", pass.proId),
-      where("date", ">=", parsed.dateFrom), where("date", "<=", parsed.dateTo)));
-    const blkSnap = await getDocs(query(collection(db, "blocks"),
-      where("proId", "==", pass.proId),
-      where("date", ">=", parsed.dateFrom), where("date", "<=", parsed.dateTo)));
-    const blocksByDate = {};
-    blkSnap.docs.forEach(b => { (blocksByDate[b.data().date] ||= []).push(b.data()); });
+  try {
+    for (const pass of usable) {
+      // proId만 equality로 쿼리 (컴포지트 인덱스 불필요)
+      // 날짜 필터는 클라이언트에서 처리
+      const [ss, blkSnap] = await Promise.all([
+        getDocs(query(collection(db, "slots"), where("proId", "==", pass.proId))),
+        getDocs(query(collection(db, "blocks"), where("proId", "==", pass.proId)))
+      ]);
+      const blocksByDate = {};
+      blkSnap.docs.forEach(b => {
+        const d = b.data();
+        if (d.date >= parsed.dateFrom && d.date <= parsed.dateTo) {
+          (blocksByDate[d.date] ||= []).push(d);
+        }
+      });
 
-    ss.docs.forEach(d => {
-      const s = d.data();
-      if (s.status !== "open") return;
-      const h = parseInt(s.time.slice(0,2), 10);
-      if (h < parsed.startH || h >= parsed.endH) return;
-      if (isBlocked(blocksByDate[s.date] || [], s.time)) return;
-      candidates.push({ slotId: d.id, ...s, pass });
-    });
+      ss.docs.forEach(d => {
+        const s = d.data();
+        if (s.status !== "open") return;
+        if (s.date < parsed.dateFrom || s.date > parsed.dateTo) return;  // 날짜 범위
+        const h = parseInt(s.time.slice(0,2), 10);
+        if (h < parsed.startH || h >= parsed.endH) return;
+        if (isBlocked(blocksByDate[s.date] || [], s.time)) return;
+        candidates.push({ slotId: d.id, ...s, pass });
+      });
+    }
+  } catch (e) {
+    box.innerHTML = `<p class="nl-result-head">${viaAi ? "✨ AI 해석" : "🔍"} "${esc(q)}"</p>
+      <div class="nl-empty">검색 중 오류가 발생했어요.<br><span style="font-size:12px">${esc(e.message)}</span></div>`;
+    return;
   }
 
   // 가까운 날짜·이른 시간 우선 정렬
