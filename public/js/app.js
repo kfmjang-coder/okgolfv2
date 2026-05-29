@@ -325,6 +325,7 @@ window.pickPassForRecurring = (passId, passOrJson, autoOnly) => {
   getDoc(doc(db, "pros", p.proId)).then(s => {
     if (s.exists()) draftWorkHours = s.data().workHours || null;
     fillRecurTimeOptions();
+    fillRecurWeeksOptions();
   });
   // 선택된 이용권을 요약 카드 하나로만 표시
   $("recurPassPick").innerHTML = `<p class="sub" style="margin-bottom:8px">사용할 이용권</p>
@@ -360,7 +361,7 @@ function noPassCard() {
   </div>`;
 }
 
-// 선택한 프로의 운영시간 범위로 20분 단위 시간 옵션 채우기
+// 선택한 프로의 운영시간 범위로 20분 단위 시간 옵션 채우기 (반복 예약용)
 function fillRecurTimeOptions() {
   const sel = $("rcTime"); if (!sel) return;
   const wh = draftWorkHours || { start: "10:00", end: "22:00" };
@@ -371,6 +372,17 @@ function fillRecurTimeOptions() {
     o += `<option value="${t}">${t}</option>`;
   }
   sel.innerHTML = o;
+}
+
+// 매장 예약 가능 범위(bookWindowWeeks)에 맞춰 반복 기간 옵션 생성
+function fillRecurWeeksOptions() {
+  const sel = $("rcWeeks"); if (!sel) return;
+  const choices = [2, 4, 8, 12].filter(w => w <= bookWindowWeeks);
+  // 최소 하나는 보이게 (매장이 1주여도 1주 옵션 노출)
+  if (choices.length === 0) choices.push(bookWindowWeeks || 1);
+  sel.innerHTML = choices.map(w => `<option value="${w}">${w}주</option>`).join("");
+  const hint = $("rcWeeksHint");
+  if (hint) hint.textContent = `현재 매장 예약 가능 범위: ${bookWindowWeeks}주`;
 }
 
 window.openStep2 = openStep2;
