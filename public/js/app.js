@@ -1948,16 +1948,19 @@ window.nlSearch = async () => {
   }
   box.innerHTML = `<p class="nl-result-head">${viaAi ? "✨ AI 해석" : "🔍"} "${esc(q)}" 검색 중…</p>`;
 
-  // 이용권별로 슬롯 검색해서 합치기
+  // 이용권별로 슬롯 검색해서 합치기 + 분류용 데이터 수집
   let candidates = [];
+  let diagnostics = [];  // 빈 결과일 때 친근 메시지 생성용
   try {
     for (const pass of usable) {
-      // proId만 equality로 쿼리 (컴포지트 인덱스 불필요)
-      // 날짜 필터는 클라이언트에서 처리
-      const [ss, blkSnap] = await Promise.all([
+      const [ss, blkSnap, proSnap] = await Promise.all([
         getDocs(query(collection(db, "slots"), where("proId", "==", pass.proId))),
-        getDocs(query(collection(db, "blocks"), where("proId", "==", pass.proId)))
+        getDocs(query(collection(db, "blocks"), where("proId", "==", pass.proId))),
+        getDoc(doc(db, "pros", pass.proId))
       ]);
+      const proData = proSnap.exists() ? proSnap.data() : {};
+      const workHours = proData.workHours || { start: "10:00", end: "22:00" };
+
       const blocksByDate = {};
       blkSnap.docs.forEach(b => {
         const d = b.data();
@@ -1966,14 +1969,22 @@ window.nlSearch = async () => {
         }
       });
 
+      // 그 기간의 슬롯들 (개수 카운트용)
+      const slotsInRange = ss.docs.map(d => ({ id: d.id, ...d.data() }))
+        .filter(s => s.date >= parsed.dateFrom && s.date <= parsed.dateTo);
+
       ss.docs.forEach(d => {
         const s = d.data();
         if (s.status !== "open") return;
-        if (s.date < parsed.dateFrom || s.date > parsed.dateTo) return;  // 날짜 범위
+        if (s.date < parsed.dateFrom || s.date > parsed.dateTo) return;
         const h = parseInt(s.time.slice(0,2), 10);
         if (h < parsed.startH || h >= parsed.endH) return;
         if (isBlocked(blocksByDate[s.date] || [], s.time)) return;
         candidates.push({ slotId: d.id, ...s, pass });
+      });
+
+      diagnostics.push({
+        pass, proName: pass.proName, workHours, blocksByDate, slotsInRange
       });
     }
   } catch (e) {
@@ -1987,8 +1998,9 @@ window.nlSearch = async () => {
   const top3 = candidates.slice(0, 3);
 
   if (top3.length === 0) {
+    const reason = diagnoseEmptyResult(parsed, diagnostics);
     box.innerHTML = `<p class="nl-result-head">${viaAi ? "✨ AI 해석" : "🔍"} "${esc(q)}"</p>
-      <div class="nl-empty">조건에 맞는 빈 시간을 찾지 못했어요.<br>다른 날짜·시간으로 다시 검색해보세요.</div>`;
+      <div class="nl-empty" style="text-align:left;line-height:1.6">${reason}</div>`;
     return;
   }
 
@@ -2008,6 +2020,111 @@ window.nlSearch = async () => {
 };
 
 // 검색 결과 카드 탭 → 평소 확정 흐름으로 진입
+// 빈 결과의 원인을 분류해서 친근한 메시지로 변환
+// 우선순위: 매장범위 → 차단(allDay) → 차단(range) → 운영시간 → 다 예약됨 → 슬롯 미오픈
+function diagnoseEmptyResult(parsed, diagnostics) {
+  const W = ["일","월","화","수","목","금","토"];
+  const fmt = (ds) => {
+    const d = new Date(ds);
+    return `${d.getMonth()+1}월 ${d.getDate()}일(${W[d.getDay()]})`;
+  };
+  // 1) 매장 예약 가능 범위 초과 여부
+  const today = new Date(); today.setHours(0,0,0,0);
+  const maxDate = new Date(today);
+  maxDate.setDate(maxDate.getDate() + (bookWindowWeeks || 4) * 7);
+  const dateFromObj = new Date(parsed.dateFrom);
+  if (dateFromObj > maxDate) {
+    return `🗓️ 지금은 <b>${bookWindowWeeks}주 앞</b>까지만 예약할 수 있어요.<br>
+      그 이후 일정은 매장 정책상 잠겨있어요. 시간이 좀 지난 후 다시 확인해주세요.`;
+  }
+
+  // 각 이용권(프로)별 분석 — 가장 적합한 메시지 1개 선택
+  const reasons = [];
+  for (const d of diagnostics) {
+    const proName = d.proName || "프로";
+    const wh = d.workHours;
+    const sh = parseInt(wh.start.slice(0,2),10), eh = parseInt(wh.end.slice(0,2),10);
+
+    // 2) 검색 첫 날이 하루 종일 차단된 경우
+    const firstDateBlocks = d.blocksByDate[parsed.dateFrom] || [];
+    const allDayBlock = firstDateBlocks.find(b => b.allDay);
+    if (allDayBlock) {
+      const reasonText = allDayBlock.reason ? ` (${esc(allDayBlock.reason)})` : "";
+      reasons.push({
+        priority: 2,
+        msg: `📅 <b>${esc(proName)}님</b>이 ${fmt(parsed.dateFrom)}은 휴무로 정해두셨어요${reasonText}.<br>
+          다른 날짜로 다시 검색해보세요.`
+      });
+      continue;
+    }
+
+    // 3) 검색 시간대 전체가 부분 차단으로 막힌 경우
+    const rangeBlock = firstDateBlocks.find(b =>
+      !b.allDay && b.startTime && b.endTime
+      && parseInt(b.startTime.slice(0,2),10) <= parsed.startH
+      && parseInt(b.endTime.slice(0,2),10) >= parsed.endH);
+    if (rangeBlock) {
+      const reasonText = rangeBlock.reason ? ` 사유: ${esc(rangeBlock.reason)}` : "";
+      reasons.push({
+        priority: 3,
+        msg: `⏸️ <b>${esc(proName)}님</b>이 ${fmt(parsed.dateFrom)} 그 시간대(${rangeBlock.startTime}~${rangeBlock.endTime})를 비워두셨어요.${reasonText}<br>
+          다른 시간이나 날짜로 검색해보세요.`
+      });
+      continue;
+    }
+
+    // 4) 검색 시간이 운영시간 밖
+    if (parsed.endH <= sh || parsed.startH >= eh) {
+      reasons.push({
+        priority: 4,
+        msg: `🕐 <b>${esc(proName)}님</b>의 운영시간은 ${wh.start}~${wh.end}예요.<br>
+          그 시간대는 운영하지 않아 검색 결과가 없어요. 운영시간 안으로 다시 검색해보세요.`
+      });
+      continue;
+    }
+
+    // 5) 슬롯이 있긴 한데 모두 예약됨 또는 차단됨
+    const inRangeSlots = d.slotsInRange.filter(s => {
+      const h = parseInt(s.time.slice(0,2),10);
+      return h >= parsed.startH && h < parsed.endH;
+    });
+    if (inRangeSlots.length > 0) {
+      const booked = inRangeSlots.filter(s => s.status === "booked").length;
+      if (booked === inRangeSlots.length) {
+        reasons.push({
+          priority: 5,
+          msg: `🔥 그 시간대 <b>${esc(proName)}님</b> 예약이 다 차버렸어요 😅<br>
+            인기 있는 시간이라 빠르게 마감됐네요. 다른 날짜·시간을 시도해보세요.`
+        });
+        continue;
+      }
+    }
+
+    // 6) 슬롯 자체가 안 열림
+    if (d.slotsInRange.length === 0) {
+      reasons.push({
+        priority: 6,
+        msg: `⏳ 아직 그 날짜의 예약 시간이 열리지 않았어요.<br>
+          보통 일정이 가까워지면 열리니, 조금 후 다시 확인해주세요.`
+      });
+      continue;
+    }
+
+    // 7) 위 다 아니지만 결과 없음 (드문 케이스)
+    reasons.push({
+      priority: 7,
+      msg: `검색 조건에 맞는 빈 시간을 찾지 못했어요.<br>다른 날짜·시간으로 다시 검색해보세요.`
+    });
+  }
+
+  // 가장 구체적인(낮은 priority 숫자) 메시지 선택
+  if (reasons.length === 0) {
+    return "검색 조건에 맞는 빈 시간을 찾지 못했어요.<br>다른 날짜·시간으로 다시 검색해보세요.";
+  }
+  reasons.sort((a,b) => a.priority - b.priority);
+  return reasons[0].msg;
+}
+
 window.pickNlSlot = async (passId, slotId, date, time) => {
   const ps = await getDoc(doc(db, "passes", passId));
   if (!ps.exists()) return alert("이용권을 찾을 수 없어요.");
