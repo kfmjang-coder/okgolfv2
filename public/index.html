@@ -67,6 +67,8 @@
     padding:10px 14px;margin-top:14px;font-size:14px;display:flex;align-items:center;justify-content:space-between;gap:10px}
   .suggest-btn{background:var(--accent);color:var(--accent-d);border:none;border-radius:999px;
     padding:7px 14px;font-size:13px;font-weight:700;white-space:nowrap;cursor:pointer;font-family:inherit}
+  .hint-banner{background:rgba(95,217,122,.08);border:1px solid var(--accent2);border-left:4px solid var(--accent);
+    border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:14px;line-height:1.5}
   .up-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
   .up-time{color:var(--accent);font-size:15px;font-weight:700;margin-top:4px}
   /* STEP1 */
@@ -314,6 +316,7 @@
   <section id="step2View" class="view">
     <div class="topbar"><button class="back" onclick="show('step1View')">‹</button><h3 style="margin:0">시간 선택</h3></div>
     <p class="sub" id="s2Pro" style="margin-bottom:10px"></p>
+    <div id="s2Hint" class="hint-banner hide"></div>
     <div id="dateBar"></div>
     <div id="slotZones" style="margin-top:12px"></div>
   </section>

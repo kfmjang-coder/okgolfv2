@@ -244,9 +244,18 @@ window.quickRebook = async (b) => {
     alert("이용권의 잔여 횟수가 부족합니다. 매장에 문의하세요.");
     return;
   }
+  // 지난 예약과 같은 요일의 다음 날짜 계산 (과거 예약이면 그 다음주, 미래 예약이면 그 다음주)
+  const lastDate = new Date(b.date);
+  const today = new Date(); today.setHours(0,0,0,0);
+  let target = new Date(lastDate);
+  while (target <= today) target.setDate(target.getDate() + 7);
+  const targetDs = `${target.getFullYear()}-${String(target.getMonth()+1).padStart(2,"0")}-${String(target.getDate()).padStart(2,"0")}`;
+  // 추천 컨텍스트를 전역 변수에 담아 STEP2에서 활용
+  rebookHint = { date: targetDs, time: b.time };
   pickPassForBooking(ps.id, ps.data());
   openStep2();
 };
+let rebookHint = null;  // {date, time} — STEP2 진입 시 추천 안내·자동 선택용
 
 // ---------- 신규 예약: 이용권 선택 → STEP2 ----------
 window.startNewBooking = async () => {
@@ -367,8 +376,28 @@ window.openStep2 = openStep2;
 function openStep2() {
   show("step2View");
   $("s2Pro").textContent = `${draft.proName} · ${draft.lessonName}`;
-  const t = new Date(); calCursor = new Date(t.getFullYear(), t.getMonth(), 1);
+  // 추천이 있으면 그 달로, 없으면 이번 달로
+  if (rebookHint) {
+    const td = new Date(rebookHint.date);
+    calCursor = new Date(td.getFullYear(), td.getMonth(), 1);
+  } else {
+    const t = new Date(); calCursor = new Date(t.getFullYear(), t.getMonth(), 1);
+  }
   renderDateBar();
+  // 추천 안내 배너 + 해당 날짜 자동 선택
+  const hintBox = $("s2Hint");
+  if (rebookHint && hintBox) {
+    const td = new Date(rebookHint.date);
+    const W = ["일","월","화","수","목","금","토"];
+    hintBox.innerHTML = `💡 <b>${td.getMonth()+1}월 ${td.getDate()}일(${W[td.getDay()]}) ${rebookHint.time}</b>을(를) 추천드려요. 아래에서 시간을 확인하고 눌러주세요.`;
+    hintBox.classList.remove("hide");
+    // 그 날짜 자동 선택 → 슬롯 시간 자동 로드
+    pickDate(rebookHint.date);
+    rebookHint = null;  // 1회용
+  } else if (hintBox) {
+    hintBox.classList.add("hide");
+    hintBox.innerHTML = "";
+  }
 }
 
 // ---------- STEP2: 날짜바 + 시간대 접기(F2·F3) ----------
