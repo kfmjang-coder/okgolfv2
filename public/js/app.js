@@ -244,11 +244,12 @@ window.quickRebook = async (b) => {
     alert("이용권의 잔여 횟수가 부족합니다. 매장에 문의하세요.");
     return;
   }
-  // 지난 예약과 같은 요일의 다음 날짜 계산 (과거 예약이면 그 다음주, 미래 예약이면 그 다음주)
+  // 지난 예약과 같은 요일의 다음 발생일 (항상 미래로 +7)
   const lastDate = new Date(b.date);
   const today = new Date(); today.setHours(0,0,0,0);
   let target = new Date(lastDate);
-  while (target <= today) target.setDate(target.getDate() + 7);
+  target.setDate(target.getDate() + 7);              // 무조건 일주일 후로 시작
+  while (target <= today) target.setDate(target.getDate() + 7);  // 그래도 과거면 더 밀기
   const targetDs = `${target.getFullYear()}-${String(target.getMonth()+1).padStart(2,"0")}-${String(target.getDate()).padStart(2,"0")}`;
   // 추천 컨텍스트를 전역 변수에 담아 STEP2에서 활용
   rebookHint = { date: targetDs, time: b.time };
@@ -1099,7 +1100,33 @@ window.addBlock = async () => {
     data.startTime = s; data.endTime = e;
   }
   const label = type === "allDay" ? "하루 전체 휴무" : `${data.startTime}~${data.endTime} 차단`;
-  if (!confirm(`${date}\n${label}${reason ? `\n사유: ${reason}` : ""}\n\n등록할까요?`)) return;
+
+  // ⚠️ 차단 범위에 걸리는 기존 예약 검사
+  try {
+    const bSnap = await getDocs(query(collection(db, "bookings"),
+      where("proId", "==", proId), where("date", "==", date)));
+    const conflicts = bSnap.docs
+      .map(d => d.data())
+      .filter(b => b.status === "confirmed")
+      .filter(b => data.allDay
+        || (b.time >= data.startTime && b.time < data.endTime))
+      .sort((a, b) => a.time.localeCompare(b.time));
+    if (conflicts.length > 0) {
+      const lines = conflicts.map(b => `• ${b.time} — ${b.memberName || "회원"}`).join("\n");
+      const proceed = confirm(
+        `⚠️ 이 시간대에 이미 ${conflicts.length}건의 예약이 있습니다.\n\n${lines}\n\n` +
+        `차단을 등록해도 위 예약은 자동 취소되지 않습니다.\n` +
+        `회원에게 직접 연락해 안내해주세요.\n\n계속 진행할까요?`
+      );
+      if (!proceed) return;
+    } else {
+      if (!confirm(`${date}\n${label}${reason ? `\n사유: ${reason}` : ""}\n\n등록할까요?`)) return;
+    }
+  } catch (e) {
+    // 충돌 검사 실패해도 차단은 진행 가능하게 (경고만)
+    if (!confirm(`${date}\n${label}${reason ? `\n사유: ${reason}` : ""}\n\n등록할까요?\n(기존 예약 확인 실패: ${e.message})`)) return;
+  }
+
   try { await addDoc(collection(db, "blocks"), data); onAdminSlotChange(); }
   catch (err) { alert("차단 등록 실패: " + err.message); }
 };
