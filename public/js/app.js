@@ -2028,23 +2028,64 @@ window.pickNlSlot = async (passId, slotId, date, time) => {
 
 // 음성 입력 (Web Speech API)
 let nlRecognition = null;
+let nlOriginalPlaceholder = "";
 window.nlVoice = () => {
   const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Rec) { alert("이 브라우저는 음성 인식을 지원하지 않아요. Chrome·Safari 최신 버전을 이용해주세요."); return; }
   const btn = $("nlMicBtn");
+  const input = $("nlQuery");
+  const wrap = input.parentElement;
   // 이미 녹음 중이면 중지
-  if (nlRecognition) { try { nlRecognition.stop(); } catch {} nlRecognition = null; btn.classList.remove("recording"); return; }
+  if (nlRecognition) {
+    try { nlRecognition.stop(); } catch {}
+    return;  // onend 핸들러가 정리 담당
+  }
   nlRecognition = new Rec();
   nlRecognition.lang = "ko-KR";
-  nlRecognition.interimResults = false;
+  nlRecognition.interimResults = true;   // 실시간 인식 텍스트 표시
+  nlRecognition.continuous = false;
   nlRecognition.maxAlternatives = 1;
+
+  // 녹음 시작 UI
   btn.classList.add("recording");
+  btn.textContent = "⏹";   // 정지 아이콘
+  btn.title = "정지";
+  wrap.classList.add("listening");
+  nlOriginalPlaceholder = input.placeholder;
+  input.placeholder = "🎙️  말씀하세요…";
+  input.value = "";   // 새 인식 시작 시 입력창 비움
+
+  let finalText = "";
   nlRecognition.onresult = (e) => {
-    const text = e.results[0][0].transcript;
-    $("nlQuery").value = text;
-    nlSearch();
+    let interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) finalText += r[0].transcript;
+      else interim += r[0].transcript;
+    }
+    // 실시간으로 입력창 업데이트 (확정 + 인식 중)
+    input.value = (finalText + interim).trim();
   };
-  nlRecognition.onerror = (e) => { alert("음성 인식 오류: " + e.error); };
-  nlRecognition.onend = () => { btn.classList.remove("recording"); nlRecognition = null; };
+  nlRecognition.onerror = (e) => {
+    const msgMap = {
+      "no-speech": "말소리가 감지되지 않았어요. 다시 시도해주세요.",
+      "audio-capture": "마이크를 찾을 수 없어요. 기기를 확인해주세요.",
+      "not-allowed": "마이크 권한이 필요해요. 주소창 옆 자물쇠 아이콘에서 허용해주세요.",
+      "aborted": null   // 사용자가 직접 멈춘 경우 — 알림 없음
+    };
+    const msg = msgMap[e.error];
+    if (msg) alert(msg);
+  };
+  nlRecognition.onend = () => {
+    // UI 원복
+    btn.classList.remove("recording");
+    btn.textContent = "🎤";
+    btn.title = "음성 입력";
+    wrap.classList.remove("listening");
+    input.placeholder = nlOriginalPlaceholder;
+    nlRecognition = null;
+    // 인식된 텍스트가 있으면 자동 검색
+    if (input.value.trim()) nlSearch();
+  };
   nlRecognition.start();
 };
