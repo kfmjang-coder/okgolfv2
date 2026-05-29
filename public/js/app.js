@@ -2,7 +2,7 @@
 // app.js — OK골프 예약 PWA
 // 정의서 3-2 구현: 단골1탭(F1) / 슬롯접기(F2·F3) / 정보자동채움(F5) / 예약확인통합(F6)
 // ============================================================
-import { auth, db, isConfigured } from "./firebase-config.js";
+import { auth, db, isConfigured, GEMINI_API_KEY } from "./firebase-config.js";
 import {
   createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
   onAuthStateChanged, GoogleAuthProvider, signInWithPopup, updateProfile
@@ -1752,4 +1752,266 @@ window.issuePass = async () => {
       { memberId, memberName, lessonName, total, remaining: total, expireAt, status: "active", createdAt: serverTimestamp() });
     alert(`${memberName}님에게 ${lessonName}(${total}회) 발급 완료`);
   } catch (e) { alert("발급 실패: " + e.message); }
+};
+
+// ============================================================
+// [자연어 예약] — 한국어 표현 → 슬롯 조건 → 후보 3개 제시
+// ============================================================
+
+// 파서: 자연어 문자열 → { dateRange: [from, to], timeRange: [startH, endH] }
+function parseNaturalQuery(text) {
+  const s = text.trim().toLowerCase().replace(/\s+/g, " ");
+  const today = new Date(); today.setHours(0,0,0,0);
+  const WEEK_KO = { "일":0,"월":1,"화":2,"수":3,"목":4,"금":5,"토":6 };
+  let dateFrom = null, dateTo = null;
+  let startH = 8, endH = 22;   // 기본: 종일
+  let dateMatched = false, timeMatched = false;
+
+  // ---- 날짜 파싱 ----
+  // "오늘"
+  if (/오늘/.test(s)) { dateFrom = new Date(today); dateTo = new Date(today); dateMatched = true; }
+  // "내일"
+  else if (/내일/.test(s)) {
+    dateFrom = new Date(today); dateFrom.setDate(dateFrom.getDate()+1);
+    dateTo = new Date(dateFrom); dateMatched = true;
+  }
+  // "모레"
+  else if (/모레/.test(s)) {
+    dateFrom = new Date(today); dateFrom.setDate(dateFrom.getDate()+2);
+    dateTo = new Date(dateFrom); dateMatched = true;
+  }
+  // "이번 주말" / "주말"
+  else if (/(이번\s*)?주말/.test(s)) {
+    const day = today.getDay();
+    const sat = new Date(today); sat.setDate(sat.getDate() + ((6 - day + 7) % 7));
+    const sun = new Date(sat); sun.setDate(sun.getDate()+1);
+    dateFrom = sat; dateTo = sun; dateMatched = true;
+  }
+  else {
+    const dowMatch = s.match(/(다음\s*주|이번\s*주|담\s*주)?\s*([일월화수목금토])(?:요일)?/);
+    if (dowMatch) {
+      const isNext = !!dowMatch[1] && /다음|담/.test(dowMatch[1]);
+      const targetDow = WEEK_KO[dowMatch[2]];
+      let offset = (targetDow - today.getDay() + 7) % 7;
+      if (offset === 0) offset = isNext ? 7 : 0;
+      if (isNext) offset += 7;
+      const d = new Date(today); d.setDate(d.getDate() + offset);
+      dateFrom = d; dateTo = new Date(d); dateMatched = true;
+    }
+  }
+  const ymd = s.match(/(\d{1,2})\s*월\s*(\d{1,2})\s*일|(\d{1,2})\/(\d{1,2})/);
+  if (ymd) {
+    const m = parseInt(ymd[1]||ymd[3],10), d = parseInt(ymd[2]||ymd[4],10);
+    const y = today.getFullYear();
+    let dt = new Date(y, m-1, d);
+    if (dt < today) dt = new Date(y+1, m-1, d);
+    dateFrom = dt; dateTo = new Date(dt); dateMatched = true;
+  }
+
+  // 날짜 못 잡았으면 오늘부터 7일을 검색 범위로
+  if (!dateFrom) {
+    dateFrom = new Date(today);
+    dateTo = new Date(today); dateTo.setDate(dateTo.getDate()+7);
+  }
+
+  // ---- 시간 파싱 ----
+  if (/새벽/.test(s)) { startH = 5; endH = 9; timeMatched = true; }
+  if (/아침/.test(s)) { startH = 7; endH = 11; timeMatched = true; }
+  if (/오전/.test(s)) { startH = 8; endH = 12; timeMatched = true; }
+  if (/점심|낮/.test(s)) { startH = 11; endH = 14; timeMatched = true; }
+  if (/오후/.test(s)) { startH = 12; endH = 18; timeMatched = true; }
+  if (/저녁/.test(s)) { startH = 18; endH = 22; timeMatched = true; }
+  if (/밤|야간/.test(s)) { startH = 20; endH = 24; timeMatched = true; }
+  const hourMatch = s.match(/(\d{1,2})(?:시|:00)/);
+  if (hourMatch) {
+    let h = parseInt(hourMatch[1],10);
+    if (/오후|저녁|밤/.test(s) && h < 12) h += 12;
+    startH = h; endH = h + 2;
+    if (endH > 24) endH = 24;
+    timeMatched = true;
+  }
+
+  // 날짜 못 잡았으면 오늘부터 7일을 검색 범위로
+  if (!dateFrom) {
+    dateFrom = new Date(today);
+    dateTo = new Date(today); dateTo.setDate(dateTo.getDate()+7);
+  }
+
+  return {
+    dateFrom: ymdStr(dateFrom),
+    dateTo: ymdStr(dateTo),
+    startH, endH,
+    confident: dateMatched   // 날짜라도 잡혔으면 규칙으로 충분
+  };
+}
+function ymdStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+
+// Gemini API로 자연어 → JSON 조건 변환 (규칙 파서 폴백용)
+// 키가 비어있거나 호출 실패 시 null 반환 → 호출자가 규칙 파서 결과로 폴백
+async function geminiParseQuery(text) {
+  if (!GEMINI_API_KEY) return null;
+  const today = new Date();
+  const todayStr = ymdStr(today);
+  const W = ["일","월","화","수","목","금","토"];
+  const dowStr = W[today.getDay()];
+
+  const prompt = `당신은 한국어 골프 레슨 예약 시간을 해석하는 보조입니다.
+오늘 날짜: ${todayStr} (${dowStr}요일)
+사용자 입력: "${text}"
+
+다음 JSON 형식으로만 답하세요 (다른 설명·코드블록 없이):
+{"dateFrom":"YYYY-MM-DD","dateTo":"YYYY-MM-DD","startH":숫자(0~24),"endH":숫자(0~24)}
+
+규칙:
+- dateFrom·dateTo는 검색 범위(같은 날이면 둘 다 동일)
+- 입력에 "한가한", "조용한" 같은 모호한 표현은 평일 점심·오전을 우선해 해석
+- "주말"은 가까운 토~일
+- 시간 명시 없으면 startH=8, endH=22
+- "저녁"=18~22, "오후"=12~18, "오전"=8~12, "점심"=11~14, "아침"=7~11`;
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 200 }
+      })
+    });
+    if (!res.ok) throw new Error("Gemini HTTP " + res.status);
+    const data = await res.json();
+    let raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    // 코드블록 제거
+    raw = raw.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(raw);
+    // 유효성 체크
+    if (!parsed.dateFrom || !parsed.dateTo) return null;
+    return {
+      dateFrom: parsed.dateFrom,
+      dateTo: parsed.dateTo,
+      startH: Math.max(0, Math.min(24, parseInt(parsed.startH, 10) || 8)),
+      endH: Math.max(0, Math.min(24, parseInt(parsed.endH, 10) || 22)),
+      confident: true,
+      viaAi: true
+    };
+  } catch (e) {
+    console.warn("Gemini 파싱 실패:", e.message);
+    return null;
+  }
+}
+
+// 자연어 검색 실행
+window.nlSearch = async () => {
+  const q = $("nlQuery").value.trim();
+  const box = $("nlResult");
+  if (!q) { box.innerHTML = ""; return; }
+
+  // 이용권 확인 (없으면 검색 의미 X)
+  const usable = await getUsablePasses();
+  if (usable.length === 0) {
+    box.innerHTML = `<div class="nl-empty">예약 가능한 이용권이 없어요.<br>매장에서 발급받아주세요.</div>`;
+    return;
+  }
+
+  let parsed = parseNaturalQuery(q);
+  let viaAi = false;
+  // 규칙 파서가 날짜를 못 잡았고 키가 있으면 Gemini로 재시도
+  if (!parsed.confident && GEMINI_API_KEY) {
+    box.innerHTML = `<p class="nl-result-head">✨ AI가 해석 중…</p>`;
+    const aiResult = await geminiParseQuery(q);
+    if (aiResult) { parsed = aiResult; viaAi = true; }
+  }
+  box.innerHTML = `<p class="nl-result-head">${viaAi ? "✨ AI 해석" : "🔍"} "${esc(q)}" 검색 중…</p>`;
+
+  // 이용권별로 슬롯 검색해서 합치기
+  let candidates = [];
+  for (const pass of usable) {
+    // 해당 프로의 그 기간 슬롯 조회
+    const ss = await getDocs(query(collection(db, "slots"),
+      where("proId", "==", pass.proId),
+      where("date", ">=", parsed.dateFrom), where("date", "<=", parsed.dateTo)));
+    const blkSnap = await getDocs(query(collection(db, "blocks"),
+      where("proId", "==", pass.proId),
+      where("date", ">=", parsed.dateFrom), where("date", "<=", parsed.dateTo)));
+    const blocksByDate = {};
+    blkSnap.docs.forEach(b => { (blocksByDate[b.data().date] ||= []).push(b.data()); });
+
+    ss.docs.forEach(d => {
+      const s = d.data();
+      if (s.status !== "open") return;
+      const h = parseInt(s.time.slice(0,2), 10);
+      if (h < parsed.startH || h >= parsed.endH) return;
+      if (isBlocked(blocksByDate[s.date] || [], s.time)) return;
+      candidates.push({ slotId: d.id, ...s, pass });
+    });
+  }
+
+  // 가까운 날짜·이른 시간 우선 정렬
+  candidates.sort((a,b) => (a.date + a.time).localeCompare(b.date + b.time));
+  const top3 = candidates.slice(0, 3);
+
+  if (top3.length === 0) {
+    box.innerHTML = `<p class="nl-result-head">${viaAi ? "✨ AI 해석" : "🔍"} "${esc(q)}"</p>
+      <div class="nl-empty">조건에 맞는 빈 시간을 찾지 못했어요.<br>다른 날짜·시간으로 다시 검색해보세요.</div>`;
+    return;
+  }
+
+  const W = ["일","월","화","수","목","금","토"];
+  let html = `<p class="nl-result-head">${viaAi ? "✨ AI 해석" : "🔍"} "${esc(q)}" — 추천 ${top3.length}개</p>`;
+  top3.forEach(c => {
+    const dt = new Date(c.date), dow = W[dt.getDay()];
+    html += `<button class="nl-card" onclick="pickNlSlot('${c.pass.id}','${c.slotId}','${c.date}','${c.time}')">
+      <div>
+        <b>${dt.getMonth()+1}월 ${dt.getDate()}일(${dow}) ${c.time}</b>
+        <div class="sub" style="margin-top:4px">${esc(c.pass.proName)} · ${esc(c.pass.lessonName)}</div>
+      </div>
+      <span class="chev">›</span>
+    </button>`;
+  });
+  box.innerHTML = html;
+};
+
+// 검색 결과 카드 탭 → 평소 확정 흐름으로 진입
+window.pickNlSlot = async (passId, slotId, date, time) => {
+  const ps = await getDoc(doc(db, "passes", passId));
+  if (!ps.exists()) return alert("이용권을 찾을 수 없어요.");
+  const p = ps.data();
+  draft = {
+    proId: p.proId, proName: p.proName,
+    lessonTypeId: p.lessonTypeId, lessonName: p.lessonName,
+    passId, slotId, date, time, people: 1
+  };
+  try {
+    const pro = await getDoc(doc(db, "pros", p.proId));
+    if (pro.exists()) draftWorkHours = pro.data().workHours || null;
+  } catch {}
+  // STEP2로 가서 그 날짜 자동 선택 → 확정 흐름
+  rebookHint = { date, time };
+  openStep2();
+};
+
+// 음성 입력 (Web Speech API)
+let nlRecognition = null;
+window.nlVoice = () => {
+  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Rec) { alert("이 브라우저는 음성 인식을 지원하지 않아요. Chrome·Safari 최신 버전을 이용해주세요."); return; }
+  const btn = $("nlMicBtn");
+  // 이미 녹음 중이면 중지
+  if (nlRecognition) { try { nlRecognition.stop(); } catch {} nlRecognition = null; btn.classList.remove("recording"); return; }
+  nlRecognition = new Rec();
+  nlRecognition.lang = "ko-KR";
+  nlRecognition.interimResults = false;
+  nlRecognition.maxAlternatives = 1;
+  btn.classList.add("recording");
+  nlRecognition.onresult = (e) => {
+    const text = e.results[0][0].transcript;
+    $("nlQuery").value = text;
+    nlSearch();
+  };
+  nlRecognition.onerror = (e) => { alert("음성 인식 오류: " + e.error); };
+  nlRecognition.onend = () => { btn.classList.remove("recording"); nlRecognition = null; };
+  nlRecognition.start();
 };
