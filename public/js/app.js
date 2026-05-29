@@ -5,7 +5,7 @@
 import { auth, db, isConfigured } from "./firebase-config.js";
 import {
   createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
-  onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, updateProfile
+  onAuthStateChanged, GoogleAuthProvider, signInWithPopup, updateProfile
 } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
 import {
   collection, doc, setDoc, getDoc, getDocs, query, where, orderBy, limit,
@@ -92,8 +92,6 @@ window.toggleTheme = async () => {
 // ---------- 인증 ----------
 if (isConfigured) {
   loadStoreName();
-  // Google redirect 로그인 결과 받기 (모바일)
-  getRedirectResult(auth).catch(() => {});
   onAuthStateChanged(auth, async (user) => {
     me = user;
     if (user) {
@@ -136,12 +134,12 @@ window.login = async () => {
   catch (e) { alert("로그인 실패: " + e.message); }
 };
 window.googleLogin = async () => {
-  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-  try {
-    if (isMobile) await signInWithRedirect(auth, new GoogleAuthProvider());
-    else await signInWithPopup(auth, new GoogleAuthProvider());
+  try { await signInWithPopup(auth, new GoogleAuthProvider()); }
+  catch (e) {
+    // 사용자가 팝업 취소한 경우는 알림 안 띄움
+    if (e.code === "auth/popup-closed-by-user" || e.code === "auth/cancelled-popup-request") return;
+    alert("구글 로그인 실패: " + e.message);
   }
-  catch (e) { alert("구글 로그인 실패: " + e.message); }
 };
 window.logout = () => signOut(auth);
 let signupMode = false;
