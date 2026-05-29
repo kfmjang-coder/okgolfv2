@@ -1092,18 +1092,47 @@ window.onAdminSlotChange = async () => {
         <select id="blkEnd" style="flex:1" onchange="updateBlockConflictHint()">${timeOptions(adminSlotState.start, adminSlotState.end, true)}</select>
       </div>
     </div>
+
+    <p class="mini-label" style="margin-top:14px">🔁 반복</p>
+    <select id="blkRepeat" onchange="onBlkRepeat()">
+      <option value="once">이 날짜에만</option>
+      <option value="daily">매일 반복</option>
+      <option value="weekday">평일 반복 (월~금)</option>
+      <option value="weekend">주말 반복 (토·일)</option>
+      <option value="sameDow">매주 같은 요일</option>
+    </select>
+    <div id="blkRepeatWeeks" class="hide" style="margin-top:10px">
+      <label class="sub">기간</label>
+      <select id="blkWeeks" onchange="updateBlockConflictHint()"></select>
+    </div>
+
     <div id="blkConflictHint" class="hide"></div>
-    <input id="blkReason" placeholder="차단 사유 (예: 외부 레슨, 개인 사정)" style="margin-top:10px">
+    <input id="blkReason" placeholder="차단 사유 (예: 점심, 외부 레슨)" style="margin-top:10px">
     <button class="btn-ghost" onclick="addBlock()" style="margin-top:10px">차단 등록</button>`;
   // 현재 차단 목록
   if (blocks.length) {
-    html += `<p class="sub" style="margin-top:16px">현재 차단 목록</p>`;
+    html += `<p class="sub" style="margin-top:16px">현재 차단 목록 <span class="sub" style="opacity:.7">· ${blocks.length}건</span></p>`;
+    const repeatLabelMap = {
+      daily: "매일",
+      weekday: "평일",
+      weekend: "주말",
+      sameDow: "매주 같은 요일"
+    };
     blkSnap.docs.forEach(d => {
       const b = d.data();
       const range = b.allDay ? "🌙 하루 전체 휴무" : `⏰ ${b.startTime} ~ ${b.endTime}`;
+      const groupBadge = b.groupId
+        ? `<div class="sub" style="margin-top:2px;color:var(--accent)">🔁 ${repeatLabelMap[b.repeatInfo?.repeat] || "반복"} 차단 (총 ${b.repeatInfo?.total || "?"}일)</div>`
+        : "";
+      const groupBtn = b.groupId
+        ? `<button class="mini-btn danger" onclick="removeBlockGroup('${b.groupId}')" style="margin-top:6px">그룹 전체 해제</button>`
+        : "";
       html += `<div class="bk-card" style="margin-top:8px"><div class="bk-top">
-        <div><b>${range}</b>${b.reason ? `<div class="sub" style="margin-top:2px">${esc(b.reason)}</div>` : ""}</div>
-        <button class="mini-btn danger" onclick="removeBlock('${d.id}')">해제</button></div></div>`;
+        <div><b>${range}</b>${b.reason ? `<div class="sub" style="margin-top:2px">${esc(b.reason)}</div>` : ""}${groupBadge}</div>
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+          <button class="mini-btn danger" onclick="removeBlock('${d.id}')">이 날만 해제</button>
+          ${groupBtn}
+        </div></div></div>`;
     });
   }
   html += `</div>`;
@@ -1130,29 +1159,86 @@ window.onBlkType = () => {
   updateBlockConflictHint();
 };
 
+// 반복 옵션 변경: "이 날짜에만"이면 기간 숨김, 아니면 기간 셀렉트 노출
+window.onBlkRepeat = () => {
+  const rep = $("blkRepeat").value;
+  const box = $("blkRepeatWeeks");
+  if (rep === "once") {
+    box.classList.add("hide");
+  } else {
+    // 매장 예약 가능 범위 안에서 옵션 동적 생성
+    const sel = $("blkWeeks");
+    const choices = [1, 2, 4, 8, 12].filter(w => w <= (bookWindowWeeks || 4));
+    if (choices.length === 0) choices.push(1);
+    sel.innerHTML = choices.map(w => `<option value="${w}">${w}주</option>`).join("");
+    box.classList.remove("hide");
+  }
+  updateBlockConflictHint();
+};
+
+// 반복 옵션에 따라 차단할 날짜 목록 생성 (시작 날짜 포함)
+function expandBlockDates(startDate, repeat, weeks) {
+  const dates = [];
+  const start = new Date(startDate);
+  const totalDays = (weeks || 1) * 7;
+  for (let i = 0; i < totalDays; i++) {
+    const d = new Date(start); d.setDate(d.getDate() + i);
+    const dow = d.getDay();   // 0=일, 6=토
+    let include = false;
+    if (repeat === "once") include = (i === 0);
+    else if (repeat === "daily") include = true;
+    else if (repeat === "weekday") include = (dow >= 1 && dow <= 5);
+    else if (repeat === "weekend") include = (dow === 0 || dow === 6);
+    else if (repeat === "sameDow") include = (dow === start.getDay());
+    if (include) {
+      dates.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`);
+    }
+    if (repeat === "once" && i > 0) break;
+  }
+  return dates;
+}
+
 // 차단 폼 안에서 실시간 충돌 경고 표시 (선택만 해도 즉시 보임 — 사고 사전 차단)
 window.updateBlockConflictHint = async () => {
   const hint = $("blkConflictHint"); if (!hint) return;
   const { proId, date } = adminSlotState;
   if (!proId || !date) { hint.classList.add("hide"); return; }
   const type = $("blkType").value;
+  const repeat = $("blkRepeat")?.value || "once";
+  const weeks = parseInt($("blkWeeks")?.value, 10) || 1;
   let startTime = null, endTime = null;
   if (type === "range") {
     startTime = $("blkStart").value; endTime = $("blkEnd").value;
     if (!startTime || !endTime || startTime >= endTime) { hint.classList.add("hide"); return; }
   }
+  // 반복 범위 전체 날짜 계산
+  const dates = expandBlockDates(date, repeat, weeks);
   try {
+    // 모든 confirmed 예약을 한 번에 가져와서 클라이언트에서 필터
     const bSnap = await getDocs(query(collection(db, "bookings"),
-      where("proId", "==", proId), where("date", "==", date)));
+      where("proId", "==", proId), where("status", "==", "confirmed")));
     const conflicts = bSnap.docs
       .map(d => d.data())
-      .filter(b => b.status === "confirmed")
+      .filter(b => dates.includes(b.date))
       .filter(b => type === "allDay" || (b.time >= startTime && b.time < endTime))
-      .sort((a, b) => a.time.localeCompare(b.time));
-    if (conflicts.length === 0) { hint.classList.add("hide"); return; }
-    const lines = conflicts.slice(0, 5).map(b => `• ${b.time} ${esc(b.memberName || "회원")}`).join("<br>");
+      .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+
+    const repeatLabel = repeat === "once" ? "" : ` (${dates.length}일)`;
+    if (conflicts.length === 0) {
+      // 반복 등록인 경우엔 정보 안내(파란)만 표시
+      if (repeat !== "once") {
+        hint.className = "info-hint";
+        hint.innerHTML = `ℹ️ <b>${dates.length}일치 차단</b>이 등록됩니다 (충돌 예약 없음).`;
+        hint.classList.remove("hide");
+      } else {
+        hint.classList.add("hide");
+      }
+      return;
+    }
+    hint.className = "warn-hint";   // 빨강
+    const lines = conflicts.slice(0, 5).map(b => `• ${b.date.slice(5)} ${b.time} ${esc(b.memberName || "회원")}`).join("<br>");
     const more = conflicts.length > 5 ? `<br>외 ${conflicts.length - 5}건` : "";
-    hint.innerHTML = `⚠️ <b>이 시간대에 예약 ${conflicts.length}건</b>이 있어요.<br>
+    hint.innerHTML = `⚠️ <b>${dates.length}일치 차단${repeatLabel}</b> · 그 시간대에 이미 예약 <b>${conflicts.length}건</b>이 있어요.<br>
       ${lines}${more}<br>
       <span class="sub">차단해도 위 예약은 자동 취소되지 않아요. 회원에게 직접 안내해주세요.</span>`;
     hint.classList.remove("hide");
@@ -1164,48 +1250,91 @@ window.addBlock = async () => {
   const { proId, date } = adminSlotState;
   if (!proId || !date) { alert("프로와 날짜를 먼저 선택하세요."); return; }
   const type = $("blkType").value;       // "allDay" | "range"
+  const repeat = $("blkRepeat").value;   // "once" | "daily" | "weekday" | "weekend" | "sameDow"
+  const weeks = parseInt($("blkWeeks")?.value, 10) || 1;
   const reason = $("blkReason").value.trim();
-  const data = { proId, date, reason, allDay: type === "allDay", createdAt: serverTimestamp() };
-  if (type === "range") {
-    const s = $("blkStart").value, e = $("blkEnd").value;
-    if (s >= e) { alert("시작 시각이 종료 시각보다 빨라야 합니다."); return; }
-    data.startTime = s; data.endTime = e;
+  const allDay = type === "allDay";
+  let startTime = null, endTime = null;
+  if (!allDay) {
+    startTime = $("blkStart").value;
+    endTime = $("blkEnd").value;
+    if (startTime >= endTime) { alert("시작 시각이 종료 시각보다 빨라야 합니다."); return; }
   }
-  const label = type === "allDay" ? "하루 전체 휴무" : `${data.startTime}~${data.endTime} 차단`;
+  const dates = expandBlockDates(date, repeat, weeks);
+  if (dates.length === 0) { alert("차단할 날짜가 없습니다."); return; }
 
-  // ⚠️ 차단 범위에 걸리는 기존 예약 검사
+  const repeatLabelMap = {
+    once: "이 날짜에만",
+    daily: `매일 반복 (${weeks}주, ${dates.length}일)`,
+    weekday: `평일 반복 (${weeks}주, ${dates.length}일)`,
+    weekend: `주말 반복 (${weeks}주, ${dates.length}일)`,
+    sameDow: `매주 같은 요일 (${weeks}주, ${dates.length}일)`
+  };
+  const timeLabel = allDay ? "하루 전체 휴무" : `${startTime}~${endTime} 차단`;
+
+  // 전체 충돌 검사
   try {
     const bSnap = await getDocs(query(collection(db, "bookings"),
-      where("proId", "==", proId), where("date", "==", date)));
+      where("proId", "==", proId), where("status", "==", "confirmed")));
     const conflicts = bSnap.docs
       .map(d => d.data())
-      .filter(b => b.status === "confirmed")
-      .filter(b => data.allDay
-        || (b.time >= data.startTime && b.time < data.endTime))
-      .sort((a, b) => a.time.localeCompare(b.time));
+      .filter(b => dates.includes(b.date))
+      .filter(b => allDay || (b.time >= startTime && b.time < endTime))
+      .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
     if (conflicts.length > 0) {
-      const lines = conflicts.map(b => `• ${b.time} — ${b.memberName || "회원"}`).join("\n");
+      const lines = conflicts.slice(0, 10).map(b => `• ${b.date.slice(5)} ${b.time} — ${b.memberName || "회원"}`).join("\n");
+      const more = conflicts.length > 10 ? `\n외 ${conflicts.length - 10}건` : "";
       const proceed = confirm(
-        `⚠️ 이 시간대에 이미 ${conflicts.length}건의 예약이 있습니다.\n\n${lines}\n\n` +
-        `차단을 등록해도 위 예약은 자동 취소되지 않습니다.\n` +
-        `회원에게 직접 연락해 안내해주세요.\n\n계속 진행할까요?`
+        `⚠️ ${dates.length}일치 차단을 등록합니다.\n${timeLabel} · ${repeatLabelMap[repeat]}\n\n` +
+        `이 시간대에 이미 예약 ${conflicts.length}건이 있어요:\n${lines}${more}\n\n` +
+        `차단을 등록해도 위 예약은 자동 취소되지 않습니다.\n회원에게 직접 연락해 안내해주세요.\n\n계속 진행할까요?`
       );
       if (!proceed) return;
     } else {
-      if (!confirm(`${date}\n${label}${reason ? `\n사유: ${reason}` : ""}\n\n등록할까요?`)) return;
+      const msg = repeat === "once"
+        ? `${date}\n${timeLabel}${reason ? `\n사유: ${reason}` : ""}\n\n등록할까요?`
+        : `${dates.length}일치 차단을 등록합니다.\n${timeLabel} · ${repeatLabelMap[repeat]}${reason ? `\n사유: ${reason}` : ""}\n\n계속 진행할까요?`;
+      if (!confirm(msg)) return;
     }
   } catch (e) {
-    // 충돌 검사 실패해도 차단은 진행 가능하게 (경고만)
-    if (!confirm(`${date}\n${label}${reason ? `\n사유: ${reason}` : ""}\n\n등록할까요?\n(기존 예약 확인 실패: ${e.message})`)) return;
+    if (!confirm(`${dates.length}일치 차단을 등록합니다.\n${timeLabel}\n\n등록할까요?\n(기존 예약 확인 실패: ${e.message})`)) return;
   }
 
-  try { await addDoc(collection(db, "blocks"), data); onAdminSlotChange(); }
-  catch (err) { alert("차단 등록 실패: " + err.message); }
+  // 반복 등록 시 그룹 ID 부여 (일괄 해제용)
+  const groupId = repeat === "once" ? null : `g_${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
+  const repeatInfo = repeat === "once" ? null : { repeat, weeks, total: dates.length };
+
+  try {
+    const batch = writeBatch(db);
+    dates.forEach(d => {
+      const data = { proId, date: d, reason, allDay, createdAt: serverTimestamp() };
+      if (!allDay) { data.startTime = startTime; data.endTime = endTime; }
+      if (groupId) { data.groupId = groupId; data.repeatInfo = repeatInfo; }
+      batch.set(doc(collection(db, "blocks")), data);
+    });
+    await batch.commit();
+    toast(`✅ 차단 ${dates.length}건 등록`);
+    onAdminSlotChange();
+  } catch (err) { alert("차단 등록 실패: " + err.message); }
 };
 window.removeBlock = async (id) => {
   if (!confirm("이 차단을 해제할까요?")) return;
-  try { await deleteDoc(doc(db, "blocks", id)); onAdminSlotChange(); }
+  try { await deleteDoc(doc(db, "blocks", id)); toast("✅ 차단 해제됨"); onAdminSlotChange(); }
   catch (err) { alert("해제 실패: " + err.message); }
+};
+
+// 반복 차단 그룹 일괄 해제 — 같은 groupId를 가진 모든 차단 삭제
+window.removeBlockGroup = async (groupId) => {
+  try {
+    const snap = await getDocs(query(collection(db, "blocks"), where("groupId", "==", groupId)));
+    if (snap.empty) { alert("해당 그룹을 찾을 수 없어요."); return; }
+    if (!confirm(`이 반복 차단 그룹(총 ${snap.size}건)을 모두 해제할까요?\n취소할 수 없습니다.`)) return;
+    const batch = writeBatch(db);
+    snap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+    toast(`✅ ${snap.size}건 일괄 해제`);
+    onAdminSlotChange();
+  } catch (err) { alert("일괄 해제 실패: " + err.message); }
 };
 
 // 슬롯 토글: 닫힘→열기(생성), 열림→닫기(삭제). 예약된 건 불가.
