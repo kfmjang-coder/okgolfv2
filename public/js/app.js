@@ -40,6 +40,24 @@ window.toast = (msg) => {
   window._toastTimer = setTimeout(() => t.classList.add("hide"), 3000);
 };
 
+// 큰 데이트 피커: input 값이 바뀌면 옆 레이블을 한국어로 표시
+// HTML: <label class="date-picker"><span class="dp-label empty">날짜 선택</span><span class="dp-icon">📅</span><input type="date" ...></label>
+window.refreshDatePickerLabel = (inputEl) => {
+  const wrap = inputEl.closest(".date-picker");
+  if (!wrap) return;
+  const label = wrap.querySelector(".dp-label");
+  if (!label) return;
+  if (!inputEl.value) {
+    label.textContent = label.dataset.placeholder || "날짜 선택";
+    label.classList.add("empty");
+    return;
+  }
+  const d = new Date(inputEl.value);
+  const W = ["일","월","화","수","목","금","토"];
+  label.textContent = `${d.getFullYear()}년 ${d.getMonth()+1}월 ${d.getDate()}일 (${W[d.getDay()]})`;
+  label.classList.remove("empty");
+};
+
 window.finishBooking = () => {
   resetNlSearch();
   show("homeView");
@@ -971,7 +989,11 @@ async function renderAdminSlots() {
   box.innerHTML = `
     <p class="mini-label">슬롯 열기 / 닫기</p>
     <select id="asPro" onchange="onAdminSlotChange()">${opts}</select>
-    <input type="date" id="asDate" min="${today}" onchange="onAdminSlotChange()" style="margin-top:10px">
+    <label class="date-picker" style="margin-top:10px">
+      <span class="dp-label empty" data-placeholder="날짜 선택">날짜 선택</span>
+      <span class="dp-icon">📅</span>
+      <input type="date" id="asDate" min="${today}" onchange="refreshDatePickerLabel(this);onAdminSlotChange()">
+    </label>
     <div id="asGrid" style="margin-top:14px"><p class="hint">프로와 날짜를 선택하세요.</p></div>
     <div class="block-box">
       <p class="mini-label">⚡ 기간 일괄 오픈</p>
@@ -1898,7 +1920,7 @@ window.issuePassFor = async (memberId, memberName) => {
   $("pmPro").innerHTML = ps.docs.map(d => `<option value="${d.id}" data-name="${esc(d.data().name)}">${esc(d.data().name)}</option>`).join("");
   $("pmLesson").innerHTML = ls.docs.sort((a,b)=>(a.data().order||0)-(b.data().order||0))
     .map(d => `<option value="${d.id}" data-name="${esc(d.data().name)}">${esc(d.data().name)}</option>`).join("");
-  $("pmTotal").value = "10"; $("pmExpire").value = "";
+  $("pmTotal").value = "10"; $("pmExpire").value = ""; refreshDatePickerLabel($("pmExpire"));
   $("passModal").classList.remove("hide");
 };
 window.closePassModal = () => { $("passModal").classList.add("hide"); passModalCtx = null; };
