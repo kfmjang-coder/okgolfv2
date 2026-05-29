@@ -5,7 +5,7 @@
 import { auth, db, isConfigured } from "./firebase-config.js";
 import {
   createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
-  onAuthStateChanged, GoogleAuthProvider, signInWithPopup, updateProfile
+  onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, updateProfile
 } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
 import {
   collection, doc, setDoc, getDoc, getDocs, query, where, orderBy, limit,
@@ -13,11 +13,28 @@ import {
 } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
 
 const $ = (id) => document.getElementById(id);
-const show = (id) => {
+// 메인 탭(폰 뒤로가기로 빠져나가도 되는 화면)
+const MAIN_VIEWS = new Set(["homeView","myView","passesView","boardView","adminView","authView","loadingView"]);
+const show = (id, opts = {}) => {
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === id));
   window.scrollTo(0, 0);
+  // history 관리: 세부 화면 진입 시 스택에 쌓고, 뒤로가기 처리 중이면 스킵
+  if (!opts.fromPop) {
+    if (MAIN_VIEWS.has(id)) {
+      // 메인 탭: 스택 초기화하지 않고 그냥 replace
+      history.replaceState({ view: id }, "");
+    } else {
+      // 세부 화면: 새 항목 push (뒤로가기로 메인으로 돌아옴)
+      history.pushState({ view: id }, "");
+    }
+  }
 };
 window.show = show;
+// 폰/브라우저 뒤로가기 → 이전 화면으로
+window.addEventListener("popstate", (e) => {
+  const target = e.state?.view || "homeView";
+  show(target, { fromPop: true });
+});
 
 let me = null;          // auth user
 let myProfile = null;   // users/{uid} 문서
@@ -75,6 +92,8 @@ window.toggleTheme = async () => {
 // ---------- 인증 ----------
 if (isConfigured) {
   loadStoreName();
+  // Google redirect 로그인 결과 받기 (모바일)
+  getRedirectResult(auth).catch(() => {});
   onAuthStateChanged(auth, async (user) => {
     me = user;
     if (user) {
@@ -117,7 +136,11 @@ window.login = async () => {
   catch (e) { alert("로그인 실패: " + e.message); }
 };
 window.googleLogin = async () => {
-  try { await signInWithPopup(auth, new GoogleAuthProvider()); }
+  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  try {
+    if (isMobile) await signInWithRedirect(auth, new GoogleAuthProvider());
+    else await signInWithPopup(auth, new GoogleAuthProvider());
+  }
   catch (e) { alert("구글 로그인 실패: " + e.message); }
 };
 window.logout = () => signOut(auth);
@@ -409,6 +432,15 @@ window.pickDate = (ds) => {
 async function loadSlots() {
   const box = $("slotZones");
   box.innerHTML = `<p class="hint">불러오는 중…</p>`;
+  // 프로 운영시간 가져오기 (운영시간 밖 슬롯은 숨김)
+  let workHours = draftWorkHours;
+  if (!workHours) {
+    try {
+      const proSnap = await getDoc(doc(db, "pros", draft.proId));
+      workHours = proSnap.exists() ? (proSnap.data().workHours || { start: "10:00", end: "22:00" })
+                                   : { start: "10:00", end: "22:00" };
+    } catch { workHours = { start: "10:00", end: "22:00" }; }
+  }
   const [ssSnap, blkSnap] = await Promise.all([
     getDocs(query(collection(db, "slots"),
       where("proId", "==", draft.proId), where("date", "==", draft.date))),
@@ -416,9 +448,13 @@ async function loadSlots() {
       where("proId", "==", draft.proId), where("date", "==", draft.date)))
   ]);
   const blocks = blkSnap.docs.map(d => d.data());
-  // 차단된 시간대 슬롯 제외
+  // 차단 + 운영시간 밖 슬롯 제외
   const docs = ssSnap.docs
-    .filter(d => !isBlocked(blocks, d.data().time))
+    .filter(d => {
+      const t = d.data().time;
+      return !isBlocked(blocks, t)
+          && t >= workHours.start && t < workHours.end;
+    })
     .sort((a, b) => a.data().time.localeCompare(b.data().time));
   const ss = { empty: docs.length === 0, docs };
   if (ss.empty) { box.innerHTML = `<p class="hint">이 날짜에 예약 가능한 시간이 없습니다.</p>`; return; }
