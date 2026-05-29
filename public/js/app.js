@@ -1781,6 +1781,44 @@ window.issuePass = async () => {
 // ============================================================
 
 // 파서: 자연어 문자열 → { dateRange: [from, to], timeRange: [startH, endH] }
+// 입력의 "예약 의도"를 점검 — 'booking' | 'other' | 'ambiguous'
+// booking: 명확한 예약 의도 (날짜·시간 키워드 있음)
+// other: 명백한 무관 질문 (제외 키워드)
+// ambiguous: 둘 다 아님 → AI에게 판단 위임
+function classifyIntent(text) {
+  const s = text.trim().toLowerCase();
+  // 1. 너무 짧거나 의미없는 입력
+  if (s.length < 2) return "other";
+  if (/^[ㅋㅎ?!.,~\s]+$/.test(s)) return "other";
+
+  // 2. 명백한 무관 키워드
+  const otherKeywords = [
+    "날씨","기온","비와","눈와","태풍",
+    "몇살","나이","생일","주소","전화번호","이메일",
+    "환율","주가","뉴스","주식","코인","비트",
+    "맛집","음식","레시피","요리","배달",
+    "영화","드라마","노래","음악",
+    "축구","야구","농구","경기","승부",
+    "대통령","총리","트럼프","바이든","정치",
+    "이름이 뭐","넌 누구","너는 누구","너 누구","뭐 할 줄"
+  ];
+  if (otherKeywords.some(k => s.includes(k))) return "other";
+
+  // 3. 예약 관련 신호 단어 (있으면 booking 쪽으로 강화)
+  const bookingSignals = [
+    "예약","레슨","연습","골프","프로","수강","이용권","슬롯","시간","비어","빈","가능",
+    "오늘","내일","모레","주말","오전","오후","저녁","아침","점심","밤","새벽",
+    "월","화","수","목","금","토","일",
+    "시"  // "14시"
+  ];
+  const hasBookingSignal = bookingSignals.some(k => s.includes(k));
+  // 숫자(날짜·시간 패턴)도 신호
+  const hasNumber = /\d/.test(s);
+
+  if (hasBookingSignal || hasNumber) return "booking";
+  return "ambiguous";
+}
+
 function parseNaturalQuery(text) {
   const s = text.trim().toLowerCase().replace(/\s+/g, " ");
   const today = new Date(); today.setHours(0,0,0,0);
@@ -1879,16 +1917,21 @@ async function geminiParseQuery(text) {
   const W = ["일","월","화","수","목","금","토"];
   const dowStr = W[today.getDay()];
 
-  const prompt = `당신은 한국어 골프 레슨 예약 시간을 해석하는 보조입니다.
+  const prompt = `당신은 한국어 골프 레슨 예약 검색 보조입니다.
 오늘 날짜: ${todayStr} (${dowStr}요일)
 사용자 입력: "${text}"
 
-다음 JSON 형식으로만 답하세요 (다른 설명·코드블록 없이):
-{"dateFrom":"YYYY-MM-DD","dateTo":"YYYY-MM-DD","startH":숫자(0~24),"endH":숫자(0~24)}
+다음 두 가지 중 하나로만 답하세요 (JSON, 다른 설명 없이):
+
+1) 사용자가 레슨 예약 시간을 묻는다면:
+{"intent":"booking","dateFrom":"YYYY-MM-DD","dateTo":"YYYY-MM-DD","startH":숫자(0~24),"endH":숫자(0~24)}
+
+2) 사용자가 예약과 무관한 질문(날씨, 인물, 잡담 등)을 하면:
+{"intent":"other"}
 
 규칙:
 - dateFrom·dateTo는 검색 범위(같은 날이면 둘 다 동일)
-- 입력에 "한가한", "조용한" 같은 모호한 표현은 평일 점심·오전을 우선해 해석
+- 모호한 표현("한가한", "조용한")은 평일 점심·오전을 우선
 - "주말"은 가까운 토~일
 - 시간 명시 없으면 startH=8, endH=22
 - "저녁"=18~22, "오후"=12~18, "오전"=8~12, "점심"=11~14, "아침"=7~11`;
@@ -1906,10 +1949,10 @@ async function geminiParseQuery(text) {
     if (!res.ok) throw new Error("Gemini HTTP " + res.status);
     const data = await res.json();
     let raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    // 코드블록 제거
     raw = raw.replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(raw);
-    // 유효성 체크
+    // 무관 의도면 명시 신호 반환
+    if (parsed.intent === "other") return { intent: "other" };
     if (!parsed.dateFrom || !parsed.dateTo) return null;
     return {
       dateFrom: parsed.dateFrom,
@@ -1931,6 +1974,21 @@ window.nlSearch = async () => {
   const box = $("nlResult");
   if (!q) { box.innerHTML = ""; return; }
 
+  // ⛔ 의도 게이트: 명백한 무관 질문은 즉시 친근하게 거절
+  const intent = classifyIntent(q);
+  if (intent === "other") {
+    box.innerHTML = `<p class="nl-result-head">🤔 "${esc(q)}"</p>
+      <div class="nl-empty" style="text-align:left;line-height:1.6">
+        죄송해요, 그건 제가 도와드릴 수 없어요.<br>
+        저는 <b>레슨 예약 가능한 시간</b>을 찾아드려요.<br><br>
+        <span class="sub">이렇게 말씀해보세요:</span><br>
+        • "내일 저녁"<br>
+        • "다음주 화요일 오후"<br>
+        • "주말 아침"
+      </div>`;
+    return;
+  }
+
   // 이용권 확인 (없으면 검색 의미 X)
   const usable = await getUsablePasses();
   if (usable.length === 0) {
@@ -1944,6 +2002,19 @@ window.nlSearch = async () => {
   if (!parsed.confident && GEMINI_API_KEY) {
     box.innerHTML = `<p class="nl-result-head">✨ AI가 해석 중…</p>`;
     const aiResult = await geminiParseQuery(q);
+    // Gemini가 무관 의도로 판단
+    if (aiResult?.intent === "other") {
+      box.innerHTML = `<p class="nl-result-head">🤔 "${esc(q)}"</p>
+        <div class="nl-empty" style="text-align:left;line-height:1.6">
+          죄송해요, 그건 제가 도와드릴 수 없어요.<br>
+          저는 <b>레슨 예약 가능한 시간</b>을 찾아드려요.<br><br>
+          <span class="sub">이렇게 말씀해보세요:</span><br>
+          • "내일 저녁"<br>
+          • "다음주 화요일 오후"<br>
+          • "주말 아침"
+        </div>`;
+      return;
+    }
     if (aiResult) { parsed = aiResult; viaAi = true; }
   }
   box.innerHTML = `<p class="nl-result-head">${viaAi ? "✨ AI 해석" : "🔍"} "${esc(q)}" 검색 중…</p>`;
