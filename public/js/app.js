@@ -1079,18 +1079,20 @@ window.onAdminSlotChange = async () => {
   html += `</div>`;
   // 차단 등록 영역
   html += `<div class="block-box">
-    <p class="mini-label">🚫 예약 차단 (프로 개인사정 등)</p>
+    <p class="mini-label">🚫 예약 차단 — 시간대 전체 휴무·점심 등</p>
+    <div class="block-hint">💡 시간을 한 칸씩 열고 닫으려면 <b>위 시간 격자</b>를 누르세요.<br>여기는 <b>시간대 전체</b>를 한 번에 막을 때 사용합니다.</div>
     <select id="blkType" onchange="onBlkType()">
-      <option value="allDay">하루 전체 휴무</option>
       <option value="range">특정 시간대만 차단</option>
+      <option value="allDay">⚠️ 하루 전체 휴무</option>
     </select>
-    <div id="blkRange" class="hide">
+    <div id="blkRange">
       <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
-        <select id="blkStart" style="flex:1">${timeOptions(adminSlotState.start, adminSlotState.end, false)}</select>
+        <select id="blkStart" style="flex:1" onchange="updateBlockConflictHint()">${timeOptions(adminSlotState.start, adminSlotState.end, false)}</select>
         <span>~</span>
-        <select id="blkEnd" style="flex:1">${timeOptions(adminSlotState.start, adminSlotState.end, true)}</select>
+        <select id="blkEnd" style="flex:1" onchange="updateBlockConflictHint()">${timeOptions(adminSlotState.start, adminSlotState.end, true)}</select>
       </div>
     </div>
+    <div id="blkConflictHint" class="hide"></div>
     <input id="blkReason" placeholder="차단 사유 (예: 외부 레슨, 개인 사정)" style="margin-top:10px">
     <button class="btn-ghost" onclick="addBlock()" style="margin-top:10px">차단 등록</button>`;
   // 현재 차단 목록
@@ -1106,6 +1108,8 @@ window.onAdminSlotChange = async () => {
   }
   html += `</div>`;
   grid.innerHTML = html;
+  // 차단 폼 로드 직후 default(range) 기준으로 충돌 힌트 미리 점검
+  setTimeout(() => { if ($("blkConflictHint")) updateBlockConflictHint(); }, 0);
 };
 
 // 20분 단위 시간 옵션 (end=true면 종료용이라 마지막 시각 포함)
@@ -1123,6 +1127,36 @@ function timeOptions(startH, endH, isEnd) {
 window.onBlkType = () => {
   const isRange = $("blkType").value === "range";
   $("blkRange").classList.toggle("hide", !isRange);
+  updateBlockConflictHint();
+};
+
+// 차단 폼 안에서 실시간 충돌 경고 표시 (선택만 해도 즉시 보임 — 사고 사전 차단)
+window.updateBlockConflictHint = async () => {
+  const hint = $("blkConflictHint"); if (!hint) return;
+  const { proId, date } = adminSlotState;
+  if (!proId || !date) { hint.classList.add("hide"); return; }
+  const type = $("blkType").value;
+  let startTime = null, endTime = null;
+  if (type === "range") {
+    startTime = $("blkStart").value; endTime = $("blkEnd").value;
+    if (!startTime || !endTime || startTime >= endTime) { hint.classList.add("hide"); return; }
+  }
+  try {
+    const bSnap = await getDocs(query(collection(db, "bookings"),
+      where("proId", "==", proId), where("date", "==", date)));
+    const conflicts = bSnap.docs
+      .map(d => d.data())
+      .filter(b => b.status === "confirmed")
+      .filter(b => type === "allDay" || (b.time >= startTime && b.time < endTime))
+      .sort((a, b) => a.time.localeCompare(b.time));
+    if (conflicts.length === 0) { hint.classList.add("hide"); return; }
+    const lines = conflicts.slice(0, 5).map(b => `• ${b.time} ${esc(b.memberName || "회원")}`).join("<br>");
+    const more = conflicts.length > 5 ? `<br>외 ${conflicts.length - 5}건` : "";
+    hint.innerHTML = `⚠️ <b>이 시간대에 예약 ${conflicts.length}건</b>이 있어요.<br>
+      ${lines}${more}<br>
+      <span class="sub">차단해도 위 예약은 자동 취소되지 않아요. 회원에게 직접 안내해주세요.</span>`;
+    hint.classList.remove("hide");
+  } catch { hint.classList.add("hide"); }
 };
 
 // 차단 등록 — blkType 드롭다운 값으로 명확히 분기
@@ -1184,10 +1218,12 @@ window.toggleSlot = async (time) => {
       // 열기
       await addDoc(collection(db, "slots"), {
         proId, date, time, durationMin: 20, status: "open", bookedBy: null });
+      toast(`🔓 ${time} 열림`);
     } else {
       const d = snap.docs[0];
       if (d.data().status === "booked") { alert("예약된 시간은 닫을 수 없어요."); return; }
       await deleteDoc(doc(db, "slots", d.id)); // 닫기
+      toast(`✅ ${time} 닫힘`);
     }
     onAdminSlotChange(); // 새로고침
   } catch (e) { alert("처리 실패: " + e.message); }
