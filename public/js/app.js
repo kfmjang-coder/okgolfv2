@@ -149,6 +149,8 @@ if (isConfigured) {
       $("navUser").textContent = myProfile.name;
       if (myProfile.theme) { theme = myProfile.theme; applyTheme(); }
       document.body.classList.toggle("is-admin", myProfile.role === "admin");
+      // 관리자가 로그인하면 자동 슬롯 보충 (운영자가 잊어도 슬롯이 항상 채워져 있음)
+      if (myProfile.role === "admin") autoFillSlots();
       show("homeView");
       renderHome();
     } else {
@@ -890,7 +892,7 @@ window.adminTab = (tab) => {
   const dayBtn = $("dayOpenBtn");
   if (dayBtn) dayBtn.style.display = tab === "slots" ? "block" : "none";
   if (tab === "status") renderAdminStatus();
-  else if (tab === "slots") renderAdminSlots();
+  else if (tab === "slots") { autoFillSlots(); renderAdminSlots(); }
   else if (tab === "members") renderAdminMembers();
   else if (tab === "manage") renderAdminManage();
 };
@@ -1060,6 +1062,73 @@ window.bulkOpen = async () => {
   alert(`완료! ${created}개 슬롯을 열었습니다.`);
   if (adminSlotState.date) onAdminSlotChange();
 };
+
+// ---------- 자동 슬롯 보충 (롤링) ----------
+// 회원/관리자 진입 시 1회 호출. 매장 설정 주수만큼 슬롯이 항상 채워져 있게 자동 생성.
+// 평일·주말 구분 없이 매일, 프로 운영시간·차단 고려.
+let _autoFillDoneThisSession = false;
+async function autoFillSlots() {
+  if (_autoFillDoneThisSession) return;
+  _autoFillDoneThisSession = true;   // 세션당 1회
+  try {
+    const weeks = bookWindowWeeks || 4;
+    const today = new Date(); today.setHours(0,0,0,0);
+    // 대상 날짜 (오늘 ~ +weeks주)
+    const dates = [];
+    for (let i = 0; i < weeks * 7; i++) {
+      const d = new Date(today); d.setDate(d.getDate() + i);
+      dates.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`);
+    }
+    // 활성 프로 가져오기
+    const ps = await getDocs(query(collection(db, "pros"), where("active", "==", true)));
+    if (ps.empty) return;
+
+    let totalCreated = 0;
+    let batch = writeBatch(db), batchCount = 0;
+
+    for (const pdoc of ps.docs) {
+      const pro = pdoc.data();
+      const proId = pdoc.id;
+      const wh = pro.workHours || { start: "10:00", end: "22:00" };
+      const sh = parseInt(wh.start.slice(0,2),10);
+      const eh = parseInt(wh.end.slice(0,2),10);
+
+      // 그 프로의 기존 슬롯·차단 한 번에 조회
+      const [slotSnap, blkSnap] = await Promise.all([
+        getDocs(query(collection(db, "slots"), where("proId", "==", proId))),
+        getDocs(query(collection(db, "blocks"), where("proId", "==", proId)))
+      ]);
+      const have = new Set();
+      slotSnap.docs.forEach(s => have.add(s.data().date + " " + s.data().time));
+      const blocksByDate = {};
+      blkSnap.docs.forEach(b => { (blocksByDate[b.data().date] ||= []).push(b.data()); });
+
+      for (const date of dates) {
+        const dayBlocks = blocksByDate[date] || [];
+        for (let h = sh; h < eh; h++) for (const m of [0,20,40]) {
+          const t = String(h).padStart(2,"0")+":"+String(m).padStart(2,"0");
+          if (have.has(date + " " + t)) continue;
+          if (isBlocked(dayBlocks, t)) continue;
+          batch.set(doc(collection(db, "slots")),
+            { proId, date, time: t, durationMin: 20, status: "open", bookedBy: null });
+          totalCreated++; batchCount++;
+          if (batchCount >= 450) { await batch.commit(); batch = writeBatch(db); batchCount = 0; }
+        }
+      }
+    }
+    if (batchCount > 0) await batch.commit();
+    if (totalCreated > 0) {
+      console.log(`[자동 보충] 슬롯 ${totalCreated}개 생성됨`);
+      // 관리자에게만 알림 (회원에겐 조용히)
+      if (myProfile?.role === "admin") {
+        toast(`🔄 자동 보충: 슬롯 ${totalCreated}개 추가`);
+      }
+    }
+  } catch (e) {
+    console.warn("자동 보충 실패:", e.message);
+    // 회원 경험 방해 안 하게 조용히 실패
+  }
+}
 window.onAdminSlotChange = async () => {
   const sel = $("asPro");
   adminSlotState.proId = sel.value;
